@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MapLibre Protocol Isoliert-Test</title>
+<link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  body{ font-family:monospace; background:#0c1210; color:#f1efe4; margin:0; padding:0; font-size:13px; }
+  #log{ padding:12px; white-space:pre-wrap; word-break:break-all; background:#151d18; border-bottom:2px solid #d9a53f; max-height:45vh; overflow-y:auto; }
+  .ok{ color:#6fd9a8; }
+  .err{ color:#ff7a63; }
+  #map{ height:50vh; width:100%; background:#333; }
+</style>
+</head>
+<body>
+<div id="log">Startet…</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<script>
+const PMTILES_URL = 'https://ormpszktwwiahjooukjk.supabase.co/storage/v1/object/public/exotrail-maps/bergisches-land.pmtiles';
+const log = document.getElementById('log');
+function line(msg, cls){
+  const d = document.createElement('div');
+  if(cls) d.className = cls;
+  d.textContent = msg;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+log.textContent = '';
+line('1. MapLibre-Version: ' + maplibregl.getVersion());
+
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', protocol.tile);
+line('2. pmtiles-Protocol bei MapLibre registriert.');
+
+// Absichtlich der EINFACHSTMÖGLICHE Stil: nur die Vektor-Quelle, EIN simpler
+// Layer (Landfläche, falls die "landuse"/"earth"-Schicht existiert), KEIN
+// @protomaps/basemaps, KEINE Sprites/Glyphs — das grenzt ein, ob das Problem
+// am Protocol-Mechanismus selbst liegt oder an der Stil-Komplexität.
+const style = {
+  version: 8,
+  sources: {
+    protomaps: {
+      type: 'vector',
+      url: 'pmtiles://' + PMTILES_URL
+    }
+  },
+  layers: [
+    { id:'bg', type:'background', paint:{ 'background-color':'#223' } },
+    { id:'test-earth', type:'fill', source:'protomaps', 'source-layer':'earth', paint:{ 'fill-color':'#6fd9a8' } },
+    { id:'test-roads', type:'line', source:'protomaps', 'source-layer':'roads', paint:{ 'line-color':'#ffffff', 'line-width':1 } }
+  ]
+};
+line('3. Minimal-Stil definiert (kein @protomaps/basemaps, nur 2 Test-Layer).');
+
+const t0 = Date.now();
+const map = new maplibregl.Map({
+  container: 'map',
+  style,
+  center: [7.275, 50.95], // Zentrum deiner extrahierten Datei
+  zoom: 11
+});
+line('4. map-Objekt erzeugt, warte auf Events…');
+
+map.on('load', () => {
+  line('5. [+' + (Date.now()-t0) + 'ms] "load"-Event gefeuert (Stil geparst).', 'ok');
+});
+map.on('sourcedata', (e) => {
+  if(e.sourceId === 'protomaps'){
+    line('   [+' + (Date.now()-t0) + 'ms] sourcedata: isSourceLoaded=' + e.isSourceLoaded + ' sourceDataType=' + e.sourceDataType);
+  }
+});
+map.on('data', (e) => {
+  if(e.sourceId === 'protomaps' && e.dataType === 'source'){
+    line('   [+' + (Date.now()-t0) + 'ms] data-Event: sourceDataType=' + e.sourceDataType + ' isSourceLoaded=' + e.isSourceLoaded);
+  }
+});
+map.on('idle', () => {
+  const feats = map.queryRenderedFeatures();
+  line('6. [+' + (Date.now()-t0) + 'ms] "idle" (alles fertig geladen) — sichtbare Objekte: ' + feats.length, feats.length>0?'ok':'err');
+});
+map.on('error', (e) => {
+  line('   [+' + (Date.now()-t0) + 'ms] ERROR: ' + (e.error && e.error.message || JSON.stringify(e).slice(0,300)), 'err');
+});
+
+setTimeout(() => {
+  line('7. [+15000ms] 15 Sekunden vergangen. Letzter bekannter Zustand oben.', 'err');
+}, 15000);
+</script>
+</body>
+</html>
