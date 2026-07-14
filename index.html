@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>ExoTrail Navi · MapLibre-Test (Runde 1)</title>
+<title>ExoTrail Navi · MapLibre-Test v0.1.1</title>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>
   :root{
@@ -97,7 +97,7 @@
       <div class="title" id="routeTitle">Lädt…</div>
       <div class="sub" id="routeSub"></div>
     </div>
-    <div class="badge">MapLibre · Runde 1</div>
+    <div class="badge">MapLibre v0.1.1</div>
   </header>
   <div id="mapWrap">
     <div id="map"></div>
@@ -192,6 +192,12 @@ pmtilesInstance.getHeader().then(h => {
 }).catch(err => {
   document.getElementById('statusBar').innerHTML = '⚠️ <b>PMTiles-Datei nicht lesbar</b>: ' + esc(err.message || String(err));
 });
+setTimeout(() => {
+  if(document.getElementById('statusBar').textContent.includes('warte auf Kartendaten')){
+    document.getElementById('statusBar').innerHTML =
+      '⚠️ <b>Zeitüberschreitung</b> — Supabase antwortet nicht auf die Range-Request-Anfrage der PMTiles-Datei. Vermutlich unterstützt der Bucket/CDN-Layer keine HTTP-Range-Requests richtig für diese Datei.';
+  }
+}, 12000);
 
 const style = {
   version: 8,
