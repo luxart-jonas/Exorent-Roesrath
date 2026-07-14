@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>PMTiles Isoliert-Test</title>
+<style>
+  body{ font-family:monospace; background:#0c1210; color:#f1efe4; padding:20px; font-size:14px; line-height:1.6; }
+  #log{ white-space:pre-wrap; word-break:break-all; }
+  .ok{ color:#6fd9a8; }
+  .err{ color:#ff7a63; }
+</style>
+</head>
+<body>
+<h2>PMTiles Isoliert-Test v0.1.0</h2>
+<div id="log">Lädt Bibliothek…</div>
+
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<script>
+const PMTILES_URL = 'https://ormpszktwwiahjooukjk.supabase.co/storage/v1/object/public/exotrail-maps/bergisches-land.pmtiles';
+const log = document.getElementById('log');
+function line(msg, cls){
+  const d = document.createElement('div');
+  if(cls) d.className = cls;
+  d.textContent = msg;
+  log.appendChild(d);
+}
+log.textContent = '';
+
+line('1. pmtiles-Objekt vorhanden? ' + (typeof pmtiles !== 'undefined'), typeof pmtiles !== 'undefined' ? 'ok' : 'err');
+line('2. pmtiles.PMTiles ist Funktion? ' + (typeof pmtiles.PMTiles === 'function'), typeof pmtiles.PMTiles === 'function' ? 'ok' : 'err');
+
+line('3. Erzeuge PMTiles-Instanz…');
+let p;
+try{
+  p = new pmtiles.PMTiles(PMTILES_URL);
+  line('   → Instanz erzeugt, kein Fehler beim Konstruktor.', 'ok');
+}catch(e){
+  line('   → FEHLER beim Konstruktor: ' + e.message, 'err');
+}
+
+line('4. Rufe getHeader() auf (Timeout nach 10s)…');
+const t0 = Date.now();
+let done = false;
+Promise.race([
+  p.getHeader(),
+  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout nach 10s — Promise hat weder resolved noch rejected')), 10000))
+]).then(h => {
+  done = true;
+  line('   → ERFOLG nach ' + (Date.now()-t0) + 'ms:', 'ok');
+  line(JSON.stringify(h, null, 2), 'ok');
+}).catch(e => {
+  done = true;
+  line('   → FEHLER nach ' + (Date.now()-t0) + 'ms: ' + (e.message || e), 'err');
+  line('   Kompletter Fehler: ' + (e.stack || JSON.stringify(e)), 'err');
+});
+
+setTimeout(() => {
+  if(!done) line('   (Diagnose: 15s vergangen, immer noch keine Antwort — echtes Hängen bestätigt)', 'err');
+}, 15000);
+</script>
+</body>
+</html>
