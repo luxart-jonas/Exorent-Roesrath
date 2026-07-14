@@ -181,9 +181,22 @@ document.getElementById('routeSub').textContent = route.waypoints.length + ' Weg
 const protocol = new pmtiles.Protocol();
 maplibregl.addProtocol('pmtiles', protocol.tile);
 
+// Independent sanity check of the PMTiles file itself, separate from MapLibre's
+// rendering pipeline — narrows down "file unreachable/corrupt" vs "style/layer issue".
+const pmtilesInstance = new pmtiles.PMTiles(PMTILES_URL);
+protocol.add(pmtilesInstance);
+pmtilesInstance.getHeader().then(h => {
+  document.getElementById('statusBar').innerHTML =
+    'PMTiles-Datei OK · Zoom ' + h.minZoom + '–' + h.maxZoom +
+    ' · Zentrum: ' + h.centerLat.toFixed(3) + ', ' + h.centerLon.toFixed(3);
+}).catch(err => {
+  document.getElementById('statusBar').innerHTML = '⚠️ <b>PMTiles-Datei nicht lesbar</b>: ' + esc(err.message || String(err));
+});
+
 const style = {
   version: 8,
   glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
+  sprite: 'https://protomaps.github.io/basemaps-assets/sprites/v4/dark',
   sources: {
     protomaps: {
       type: 'vector',
@@ -210,7 +223,7 @@ let meMarker = null;
 let wpMarkers = [];
 
 map.on('load', () => {
-  document.getElementById('statusBar').textContent = 'Karte geladen · ' + (route.waypoints.length) + ' Wegpunkte';
+  document.getElementById('statusBar').textContent = 'Stil geladen · warte auf Kartendaten…';
 
   // Route casing (white outline) + route line (red), as two GeoJSON line layers.
   const routeGeojson = {
@@ -233,10 +246,24 @@ map.on('load', () => {
   fitRoute();
 });
 
+// On-screen diagnostics — no devtools available for remote debugging, so we
+// surface tile loading state, feature counts and any errors directly in the UI.
+let tileLoadCount = 0, tileErrorCount = 0, firstDataAt = null;
+map.on('sourcedata', (e) => {
+  if(e.sourceId === 'protomaps' && e.isSourceLoaded){
+    tileLoadCount++;
+    if(!firstDataAt) firstDataAt = Date.now();
+    const feats = map.queryRenderedFeatures({ layers: map.getStyle().layers.filter(l=>l.source==='protomaps').map(l=>l.id).slice(0,50) });
+    document.getElementById('statusBar').innerHTML =
+      '<b>Kartendaten geladen</b> · ' + tileLoadCount + '. Update · sichtbare Basiskarten-Objekte: ' + feats.length +
+      (tileErrorCount ? ' · ⚠️ ' + tileErrorCount + ' Fehler' : '');
+  }
+});
 map.on('error', (e) => {
-  // Surface PMTiles/network problems in the status bar instead of a silent blank map.
-  const msg = e?.error?.message || 'Unbekannter Kartenfehler';
-  document.getElementById('statusBar').textContent = '⚠️ Kartenfehler: ' + msg;
+  tileErrorCount++;
+  const msg = (e && e.error && (e.error.message || JSON.stringify(e.error))) || JSON.stringify(e).slice(0,200);
+  document.getElementById('statusBar').innerHTML = '⚠️ <b>Kartenfehler (' + tileErrorCount + ')</b>: ' + esc(msg);
+  console.error('MapLibre error:', e);
 });
 
 function renderWpMarkers(){
