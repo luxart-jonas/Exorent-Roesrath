@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<title>ExoTrail Navi · MapLibre-Test (Runde 1)</title>
+<link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0c1210;
+    --bg-panel: #151d18;
+    --bg-elevated: #1c2620;
+    --gold: #d9a53f;
+    --gold-bright: #f0be5c;
+    --mint: #6fd9a8;
+    --coral: #ff8f66;
+    --sky: #6fb3d9;
+    --text: #f1efe4;
+    --text-dim: #9a9d8f;
+    --danger: #ff7a63;
+    --border: rgba(217,165,63,0.2);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; height:100%; background:var(--bg); color:var(--text); font-family:var(--sans); overscroll-behavior:none; }
+  #app{ position:fixed; inset:0; display:flex; flex-direction:column; }
+
+  header{
+    flex:none; padding:12px 16px; display:flex; align-items:center; justify-content:space-between;
+    background:var(--bg-panel); border-bottom:1px solid var(--border); z-index:5;
+  }
+  header .title{ font-weight:800; color:var(--gold-bright); font-size:14px; }
+  header .sub{ font-size:11px; color:var(--text-dim); margin-top:2px; }
+  header .badge{ font-size:10px; color:var(--bg); background:var(--gold); padding:3px 8px; border-radius:20px; font-weight:800; }
+
+  #mapWrap{ flex:1; position:relative; min-height:0; }
+  #map{ position:absolute; inset:0; }
+
+  .map-btn{
+    position:absolute; width:44px; height:44px; border-radius:50%;
+    background:var(--bg-elevated); border:1.5px solid var(--border); color:var(--gold-bright);
+    display:flex; align-items:center; justify-content:center; font-size:18px; cursor:pointer;
+    box-shadow:0 3px 10px rgba(0,0,0,.5); z-index:4;
+  }
+  #centerBtn{ right:12px; bottom:100px; }
+  #locateBtn{ right:12px; bottom:48px; }
+  #northBtn{ right:12px; top:12px; }
+
+  #statusBar{
+    position:absolute; left:12px; bottom:12px; right:68px; z-index:4;
+    background:rgba(21,29,24,0.92); border:1px solid var(--border); border-radius:10px;
+    padding:10px 12px; font-size:12px; color:var(--text-dim); backdrop-filter:blur(6px);
+  }
+  #statusBar b{ color:var(--gold-bright); }
+
+  .wp-pin{
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-weight:800; border-radius:50%;
+    filter:drop-shadow(0 3px 7px rgba(0,0,0,.6));
+  }
+  .wp-pin.current{ font-size:15px; width:44px; height:44px; background:var(--bg-elevated); border:2.5px solid var(--gold); color:var(--gold-bright); }
+  .wp-pin.dim{ font-size:9.5px; width:24px; height:24px; background:rgba(28,31,21,0.75); border:1.5px solid rgba(217,165,63,0.35); color:var(--text-dim); opacity:.75; }
+  .wp-pin-wrap{ position:relative; }
+  .wp-pin-ring{ position:absolute; inset:-6px; border-radius:50%; border:2px solid var(--gold-bright); animation:ringpulse 1.8s infinite; }
+  @keyframes ringpulse{ 0%{ transform:scale(.8); opacity:1; } 100%{ transform:scale(1.6); opacity:0; } }
+  .wp-tooltip-box{
+    position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%);
+    display:inline-block; background:var(--bg-elevated); color:var(--text);
+    border:1px solid var(--border); border-radius:9px; font-size:12px; font-weight:800;
+    padding:5px 10px; box-shadow:0 3px 10px rgba(0,0,0,.45); white-space:nowrap; pointer-events:none;
+  }
+
+  .me-wrap{ position:relative; width:16px; height:16px; }
+  .me-dot{ width:16px; height:16px; border-radius:50%; background:var(--sky); border:3px solid #fff; box-shadow:0 0 0 4px rgba(111,179,217,0.3); }
+  .me-arrow{
+    position:absolute; top:-13px; left:50%; transform-origin:50% 21px;
+    transition: transform .25s linear;
+    width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent;
+    border-bottom:14px solid var(--sky); filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));
+  }
+
+  .maplibregl-ctrl-attrib{ font-size:9px !important; }
+
+  #emptyState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:10px; text-align:center; padding:30px; z-index:3;
+  }
+  #emptyState h2{ color:var(--gold-bright); font-size:16px; margin:0; }
+  #emptyState p{ color:var(--text-dim); font-size:13px; margin:0; max-width:280px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <div class="title" id="routeTitle">Lädt…</div>
+      <div class="sub" id="routeSub"></div>
+    </div>
+    <div class="badge">MapLibre · Runde 1</div>
+  </header>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <button class="map-btn" id="northBtn" title="Karte Norden">🧭</button>
+    <button class="map-btn" id="centerBtn" title="Route zentrieren">🎯</button>
+    <button class="map-btn" id="locateBtn" title="Mein Standort">📍</button>
+    <div id="statusBar">Karte wird geladen…</div>
+    <div id="emptyState" style="display:none;">
+      <h2>Keine Route aktiv</h2>
+      <p>Öffne zuerst die normale ExoTrail-Navi-App und wähle oder erstelle eine Route — diese Testversion liest dieselben Daten aus dem Browser-Speicher.</p>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<script src="https://unpkg.com/@protomaps/basemaps@5/dist/basemaps.js" crossorigin="anonymous"></script>
+<script>
+// ---------------- Config ----------------
+const PMTILES_URL = 'https://ormpszktwwiahjooukjk.supabase.co/storage/v1/object/public/exotrail-maps/bergisches-land.pmtiles';
+
+// ---------------- Route data (reads the SAME localStorage as the main app) ----------------
+function loadRouteLibrary(){
+  try{ return JSON.parse(localStorage.getItem('exotrail_routes_v1') || '{}'); }
+  catch(e){ return {}; }
+}
+function loadProgress(routeId){
+  try{ const p = localStorage.getItem('exotrail_progress_'+routeId); return p ? JSON.parse(p) : null; }
+  catch(e){ return null; }
+}
+
+const routeLibrary = loadRouteLibrary();
+const activeId = localStorage.getItem('exotrail_active_route_id');
+const route = routeLibrary[activeId] || routeLibrary[Object.keys(routeLibrary)[0]] || null;
+const progress = route ? (loadProgress(route.id) || { visited: [] }) : { visited: [] };
+
+// ---------------- Geo helpers (copied from the main app) ----------------
+function haversine(lat1,lon1,lat2,lon2){
+  const R=6371000, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function getCurrentPositionAsync(){
+  return new Promise((resolve,reject) => {
+    if(!('geolocation' in navigator)) return reject(new Error('Kein GPS verfügbar'));
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
+  });
+}
+function nextUnvisitedIndex(){ return route.waypoints.findIndex(w => !progress.visited.includes(w.id)); }
+function waypointLabel(index){
+  const w = route.waypoints[index];
+  if(w.type === 'start') return 'Start';
+  if(w.type === 'finish') return 'Ziel';
+  let counter = 0;
+  for(let j=0;j<=index;j++){
+    const t = route.waypoints[j].type;
+    if(t === 'start' || t === 'finish') continue;
+    counter++;
+  }
+  return String(counter).padStart(2,'0');
+}
+function routeLineCoords(r){
+  // GeoJSON wants [lng,lat], the app's stored data is {lat,lng} — swap here.
+  const pts = (r.track && r.track.length > 1) ? r.track : r.waypoints.map(w => [w.lat, w.lng]);
+  return pts.map(p => [p[1], p[0]]);
+}
+
+// ---------------- Empty-route guard ----------------
+if(!route){
+  document.getElementById('emptyState').style.display = 'flex';
+  document.getElementById('statusBar').style.display = 'none';
+  document.getElementById('routeTitle').textContent = 'Keine Route';
+  throw new Error('no route');
+}
+document.getElementById('routeTitle').textContent = route.name || 'Route';
+document.getElementById('routeSub').textContent = route.waypoints.length + ' Wegpunkte';
+
+// ---------------- PMTiles + MapLibre setup ----------------
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', protocol.tile);
+
+const style = {
+  version: 8,
+  glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
+  sources: {
+    protomaps: {
+      type: 'vector',
+      url: 'pmtiles://' + PMTILES_URL,
+      attribution: '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a> Mitwirkende'
+    }
+  },
+  layers: basemaps.layers('protomaps', basemaps.namedFlavor('dark'), { lang:'de' })
+};
+
+const startWp = route.waypoints[0];
+const map = new maplibregl.Map({
+  container: 'map',
+  style,
+  center: [startWp.lng, startWp.lat],
+  zoom: 14,
+  pitch: 0,
+  attributionControl: { compact: true }
+  // touchZoomRotate + dragRotate are ON by default — combined pinch-zoom +
+  // two-finger-rotate, native, no custom gesture code needed at all.
+});
+
+let meMarker = null;
+let wpMarkers = [];
+
+map.on('load', () => {
+  document.getElementById('statusBar').textContent = 'Karte geladen · ' + (route.waypoints.length) + ' Wegpunkte';
+
+  // Route casing (white outline) + route line (red), as two GeoJSON line layers.
+  const routeGeojson = {
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: routeLineCoords(route) }
+  };
+  map.addSource('route', { type: 'geojson', data: routeGeojson });
+  map.addLayer({
+    id: 'route-casing', type: 'line', source: 'route',
+    layout: { 'line-cap':'round', 'line-join':'round' },
+    paint: { 'line-color':'#ffffff', 'line-width':9, 'line-opacity':0.35 }
+  });
+  map.addLayer({
+    id: 'route-line', type: 'line', source: 'route',
+    layout: { 'line-cap':'round', 'line-join':'round' },
+    paint: { 'line-color':'#ff1a1a', 'line-width':5, 'line-opacity':0.95 }
+  });
+
+  renderWpMarkers();
+  fitRoute();
+});
+
+map.on('error', (e) => {
+  // Surface PMTiles/network problems in the status bar instead of a silent blank map.
+  const msg = e?.error?.message || 'Unbekannter Kartenfehler';
+  document.getElementById('statusBar').textContent = '⚠️ Kartenfehler: ' + msg;
+});
+
+function renderWpMarkers(){
+  wpMarkers.forEach(m => m.remove());
+  wpMarkers = [];
+  const nIdx = nextUnvisitedIndex();
+  route.waypoints.forEach((w,i) => {
+    const current = i === nIdx;
+    const label = waypointLabel(i);
+    const wrap = document.createElement('div');
+    wrap.className = 'wp-pin-wrap';
+    wrap.innerHTML =
+      (current ? '<div class="wp-pin-ring"></div>' : '') +
+      '<div class="wp-pin ' + (current ? 'current' : 'dim') + '">' + label + '</div>' +
+      (current ? '<div class="wp-tooltip-box">' + esc(w.name) + '</div>' : '');
+    const marker = new maplibregl.Marker({ element: wrap, anchor:'center' })
+      .setLngLat([w.lng, w.lat])
+      .addTo(map);
+    wpMarkers.push(marker);
+  });
+}
+
+function fitRoute(){
+  const lats = route.waypoints.map(w=>w.lat), lngs = route.waypoints.map(w=>w.lng);
+  const bounds = [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]];
+  map.fitBounds(bounds, { padding: 60, duration: 400 });
+}
+
+function updateMeMarker(lat,lng){
+  if(!meMarker){
+    const wrap = document.createElement('div');
+    wrap.className = 'me-wrap';
+    wrap.innerHTML = '<div class="me-dot"></div><div class="me-arrow"></div>';
+    meMarker = new maplibregl.Marker({ element: wrap, anchor:'center' }).setLngLat([lng,lat]).addTo(map);
+  } else {
+    meMarker.setLngLat([lng,lat]);
+  }
+}
+
+async function locateMe(){
+  const btn = document.getElementById('locateBtn');
+  const original = btn.textContent;
+  btn.textContent = '⏳';
+  try{
+    const pos = await getCurrentPositionAsync();
+    const lat = pos.coords.latitude, lng = pos.coords.longitude;
+    updateMeMarker(lat, lng);
+    map.flyTo({ center:[lng,lat], zoom:16, duration:600 });
+    const d = Math.round(haversine(lat, lng, route.waypoints[0].lat, route.waypoints[0].lng)/1000);
+    document.getElementById('statusBar').innerHTML = '<b>Du bist hier</b> · ' + d + ' km von Startpunkt entfernt';
+  }catch(e){
+    document.getElementById('statusBar').textContent = '⚠️ Standort nicht verfügbar: ' + e.message;
+  }
+  btn.textContent = original;
+}
+
+document.getElementById('centerBtn').onclick = fitRoute;
+document.getElementById('locateBtn').onclick = locateMe;
+document.getElementById('northBtn').onclick = () => map.easeTo({ bearing:0, pitch:0, duration:400 });
+</script>
+</body>
+</html>
