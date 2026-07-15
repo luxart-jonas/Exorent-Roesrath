@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>ExoTrail Navi · MapLibre-Test v0.5.0</title>
+<title>ExoTrail Navi · MapLibre-Test v0.6.0</title>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>
   :root{
@@ -96,9 +96,11 @@
     <div>
       <div class="title" id="routeTitle">Lädt…</div>
       <div class="sub" id="routeSub"></div>
+      <div class="sub" id="routeCountNote" style="margin-top:2px;"></div>
       <select id="routeSelector" style="margin-top:6px; background:var(--bg-elevated); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:11px; padding:3px 6px;"></select>
+      <button id="roesrathTestBtn" style="margin-top:6px; display:block; background:var(--gold); color:#141311; border:none; border-radius:6px; font-size:11px; font-weight:800; padding:5px 10px; cursor:pointer;">🧪 Rösrath-Test anzeigen (unabhängig von Bibliothek)</button>
     </div>
-    <div class="badge">MapLibre v0.5.0</div>
+    <div class="badge">MapLibre v0.6.0</div>
   </header>
   <div id="mapWrap">
     <div id="map"></div>
@@ -133,6 +135,22 @@ function loadProgress(routeId){
 const routeLibrary = loadRouteLibrary();
 const activeId = localStorage.getItem('exotrail_active_route_id');
 const testOverrideId = localStorage.getItem('exotrail_maplibre_test_route_id');
+
+// Hardcoded Rösrath fallback route — completely independent of whatever is (or
+// isn't) in this browser's localStorage. Lets us verify the map/color fix
+// works in the right place regardless of which device/profile has the real data.
+const ROESRATH_TEST_ROUTE = {
+  id: '__roesrath_test__',
+  name: 'Rösrath Test (fest einprogrammiert)',
+  waypoints: [
+    { id:'w0', type:'start', name:'Start Rösrath', lat:50.8890, lng:7.2100 },
+    { id:'w1', type:'stop', name:'Wegpunkt 1', lat:50.8950, lng:7.2200 },
+    { id:'w2', type:'stop', name:'Wegpunkt 2', lat:50.9050, lng:7.2350 },
+    { id:'w3', type:'finish', name:'Ziel Rösrath', lat:50.9150, lng:7.2500 }
+  ]
+};
+if(testOverrideId === '__roesrath_test__') routeLibrary['__roesrath_test__'] = ROESRATH_TEST_ROUTE;
+
 const routeId = (testOverrideId && routeLibrary[testOverrideId]) ? testOverrideId
   : (routeLibrary[activeId] ? activeId : Object.keys(routeLibrary)[0]);
 const route = routeLibrary[routeId] || null;
@@ -141,6 +159,8 @@ const route = routeLibrary[routeId] || null;
 // main app currently considers "active" — handy when you have both a
 // vacation-testing route and your real Rösrath route in the same library.
 const selectorEl = document.getElementById('routeSelector');
+const roesrathBtn = document.getElementById('roesrathTestBtn');
+document.getElementById('routeCountNote').textContent = Object.keys(routeLibrary).filter(k=>k!=='__roesrath_test__').length + ' Route(n) in dieser Browser-Bibliothek gefunden.';
 const libKeys = Object.keys(routeLibrary);
 if(libKeys.length > 1){
   selectorEl.innerHTML = libKeys.map(id =>
@@ -153,6 +173,10 @@ if(libKeys.length > 1){
 } else {
   selectorEl.style.display = 'none';
 }
+roesrathBtn.onclick = () => {
+  localStorage.setItem('exotrail_maplibre_test_route_id', '__roesrath_test__');
+  location.reload();
+};
 const progress = route ? (loadProgress(route.id) || { visited: [] }) : { visited: [] };
 
 // ---------------- Geo helpers (copied from the main app) ----------------
