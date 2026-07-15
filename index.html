@@ -105,8 +105,12 @@
     align-items:center; gap:6px; box-shadow:0 4px 12px rgba(0,0,0,.4); text-align:center;
   }
 
-  .wp-pin-wrap{ position:relative; }
-  .wp-pin{ display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:800; border-radius:50%; filter:drop-shadow(0 3px 7px rgba(0,0,0,.6)); }
+  /* WICHTIG: hier bewusst KEIN position:relative auf .wp-pin-wrap — das ist das
+     Marker-Root-Element, auf das MapLibre selbst position:absolute setzt (für die
+     Pixel-genaue Transform-Platzierung). Eigene position-Regel auf demselben
+     Element würde das je nach CSS-Ladereihenfolge überschreiben und die Pins aus
+     ihrer exakten Koordinate in den normalen Dokumentfluss rutschen lassen. */
+  .wp-pin{ position:relative; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:800; border-radius:50%; filter:drop-shadow(0 3px 7px rgba(0,0,0,.6)); }
   .wp-pin.current{ font-size:15px; width:44px; height:44px; background:var(--bg-elevated); border:2.5px solid var(--gold); color:var(--gold-bright); }
   .wp-pin.dim{ font-size:9.5px; width:24px; height:24px; background:rgba(28,31,21,0.75); border:1.5px solid rgba(217,165,63,0.35); color:var(--text-dim); opacity:.75; }
   .wp-pin-ring{ position:absolute; inset:-6px; border-radius:50%; border:2px solid var(--gold-bright); animation:ringpulse 1.8s infinite; }
@@ -491,9 +495,11 @@
       const wrap = document.createElement('div');
       wrap.className = 'wp-pin-wrap';
       wrap.innerHTML =
-        (current ? '<div class="wp-pin-ring"></div>' : '') +
-        '<div class="wp-pin ' + (current ? 'current' : 'dim') + '">' + label + '</div>' +
-        (current ? '<div class="wp-tooltip-box">' + esc(w.name) + '</div>' : '');
+        '<div class="wp-pin ' + (current ? 'current' : 'dim') + '">' +
+          (current ? '<div class="wp-pin-ring"></div>' : '') +
+          '<span>' + label + '</span>' +
+          (current ? '<div class="wp-tooltip-box">' + esc(w.name) + '</div>' : '') +
+        '</div>';
       const marker = new maplibregl.Marker({ element: wrap, anchor:'center' }).setLngLat([w.lng, w.lat]).addTo(map);
       wpMarkers.push(marker);
     });
