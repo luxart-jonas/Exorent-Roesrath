@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>ExoTrail Navi · MapLibre-Test v0.2.0</title>
+<title>ExoTrail Navi · MapLibre-Test v0.2.1</title>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>
   :root{
@@ -97,7 +97,7 @@
       <div class="title" id="routeTitle">Lädt…</div>
       <div class="sub" id="routeSub"></div>
     </div>
-    <div class="badge">MapLibre v0.2.0</div>
+    <div class="badge">MapLibre v0.2.1</div>
   </header>
   <div id="mapWrap">
     <div id="map"></div>
@@ -252,18 +252,24 @@ map.on('load', () => {
   fitRoute();
 });
 
-// On-screen diagnostics — no devtools available for remote debugging, so we
-// surface tile loading state, feature counts and any errors directly in the UI.
-let tileLoadCount = 0, tileErrorCount = 0, firstDataAt = null;
+// On-screen diagnostics — lightweight update on 'sourcedata' (fires very often),
+// the expensive queryRenderedFeatures() call only on 'idle' (fires rarely) —
+// doing that heavy query on every sourcedata event can thrash the main thread
+// into apparent unresponsiveness, which is likely what looked like a hang.
+let tileLoadCount = 0, tileErrorCount = 0;
 map.on('sourcedata', (e) => {
   if(e.sourceId === 'protomaps' && e.isSourceLoaded){
     tileLoadCount++;
-    if(!firstDataAt) firstDataAt = Date.now();
-    const feats = map.queryRenderedFeatures({ layers: map.getStyle().layers.filter(l=>l.source==='protomaps').map(l=>l.id).slice(0,50) });
     document.getElementById('statusBar').innerHTML =
-      '<b>Kartendaten geladen</b> · ' + tileLoadCount + '. Update · sichtbare Basiskarten-Objekte: ' + feats.length +
+      '<b>Kartendaten laden</b> · Update ' + tileLoadCount +
       (tileErrorCount ? ' · ⚠️ ' + tileErrorCount + ' Fehler' : '');
   }
+});
+map.on('idle', () => {
+  const feats = map.queryRenderedFeatures();
+  document.getElementById('statusBar').innerHTML =
+    '<b>Karte bereit</b> · sichtbare Objekte: ' + feats.length +
+    (tileErrorCount ? ' · ⚠️ ' + tileErrorCount + ' Fehler' : '');
 });
 map.on('error', (e) => {
   tileErrorCount++;
