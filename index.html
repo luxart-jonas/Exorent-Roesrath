@@ -202,6 +202,7 @@
   .field{ margin-bottom:18px; }
   .field label{ display:block; font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; }
   .field select{ width:100%; background:var(--bg-panel); border:1px solid var(--border-soft); color:var(--text); border-radius:12px; padding:12px; font-family:var(--mono); font-size:13px; }
+  .field textarea{ width:100%; background:var(--bg-panel); border:1px solid var(--border-soft); color:var(--text); border-radius:12px; padding:12px; font-family:var(--mono); font-size:12.5px; line-height:1.55; min-height:220px; resize:vertical; }
   .row{ display:flex; align-items:center; justify-content:space-between; padding:13px 0; border-bottom:1px solid var(--border-soft); }
   .row-label{ font-size:14px; }
   .switch{ width:46px; height:26px; border-radius:13px; background:var(--bg-elevated); border:1px solid var(--border-soft); position:relative; cursor:pointer; flex-shrink:0; }
@@ -276,6 +277,11 @@
     <div class="section-label">Meine Routen</div>
     <div id="routeLibraryList"></div>
     <button class="btn-block accent" id="planRouteBtn">🗺️ Karte am Handy erstellen</button>
+
+    <div class="section-label">Route als JSON bearbeiten</div>
+    <div class="row-sub" style="margin-bottom:8px;">Zeigt die aktive Route. Beschriftung auf der Karte bleibt immer nur "01", "02" — <span style="color:var(--text);">name</span>, <span style="color:var(--text);">instruction</span> (Sprechtext) und <span style="color:var(--text);">funfact</span> kannst du hier frei anpassen.</div>
+    <div class="field"><textarea id="routeJson" spellcheck="false"></textarea></div>
+    <button class="btn-block accent" id="applyRouteJson">✅ Route übernehmen</button>
 
     <div class="section-label">Sprachausgabe &amp; Sound</div>
     <div class="row"><div class="row-label">Sprachansage (TTS)</div><div class="switch" id="voiceSwitch"></div></div>
@@ -665,6 +671,10 @@
       setTimeout(() => programmaticMove = false, 600);
     }
     if(!route) return;
+    // Erst ausreden lassen: solange die Ankunfts-Karte offen ist (spricht),
+    // wird kein weiterer Fortschritt erkannt oder still übersprungen — auch
+    // nicht, wenn man zufällig schon nah am übernächsten Punkt steht.
+    if(overlayOpen) return;
 
     const nIdx = nextUnvisitedIndex();
     if(nIdx === -1) return;
@@ -1161,10 +1171,23 @@
     document.getElementById('voiceSwitch').classList.toggle('on', voiceOn);
     document.getElementById('soundSwitch').classList.toggle('on', soundOn);
     buildRouteLibraryUI();
+    document.getElementById('routeJson').value = route ? JSON.stringify(route, null, 2) : '';
     document.getElementById('statusLine').textContent = !route
       ? 'Noch keine Route aktiv.'
       : 'Route: ' + route.name + ' · Besucht: ' + progress.visited.length + '/' + route.waypoints.length + ' · XP: ' + progress.xp;
     drawerEl.classList.add('open');
+  };
+  document.getElementById('applyRouteJson').onclick = () => {
+    let parsed;
+    try{ parsed = JSON.parse(document.getElementById('routeJson').value); }
+    catch(e){ toast('Fehler im JSON: ' + e.message); return; }
+    if(!parsed || !parsed.id || !Array.isArray(parsed.waypoints)){ toast('Route braucht mindestens "id" und "waypoints"'); return; }
+    routeLibrary[parsed.id] = { ...parsed, updatedAt: Date.now() };
+    saveRouteLibraryRef();
+    activateRoute(parsed.id);
+    buildRouteLibraryUI();
+    document.getElementById('routeJson').value = JSON.stringify(routeLibrary[parsed.id], null, 2);
+    toast('Route übernommen ✅');
   };
   document.getElementById('closeDrawer').onclick = () => drawerEl.classList.remove('open');
   document.getElementById('voiceSwitch').onclick = () => {
