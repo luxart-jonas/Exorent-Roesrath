@@ -453,13 +453,43 @@
           ${isActive?'<span class="route-badge">AKTIV</span>':''}
         </div>
         <div class="route-item-meta">${(r.waypoints||[]).length} Punkte${r.updatedAt ? ' · zuletzt ' + new Date(r.updatedAt).toLocaleDateString('de-DE') : ''}</div>
-        <div class="route-item-actions"><button data-id="${id}">▶️ Aktivieren</button></div>
+        <div class="route-item-actions">
+          <button data-act="activate" data-id="${id}">▶️ Aktivieren</button>
+          <button data-act="delete" data-id="${id}" style="color:var(--danger);">🗑️ Löschen</button>
+        </div>
       </div>`;
     }).join('');
-    wrap.querySelectorAll('[data-id]').forEach(btn => {
+    wrap.querySelectorAll('[data-act="activate"]').forEach(btn => {
       btn.onclick = () => { activateRoute(btn.dataset.id); toast('"'+routeLibrary[btn.dataset.id].name+'" ist jetzt aktiv'); };
     });
+    wrap.querySelectorAll('[data-act="delete"]').forEach(btn => {
+      btn.onclick = () => deleteRouteFromLibrary(btn.dataset.id);
+    });
   }
+
+  function deleteRouteFromLibrary(id){
+    const r = routeLibrary[id];
+    if(!r) return;
+    if(!confirm('Route "'+r.name+'" wirklich löschen? Das kann nicht rückgängig gemacht werden.')) return;
+    delete routeLibrary[id];
+    saveRouteLibraryRef();
+    localStorage.removeItem('exotrail_progress_'+id);
+    if(route && route.id === id){
+      const remaining = Object.keys(routeLibrary);
+      if(remaining.length === 0){
+        route = null;
+        localStorage.removeItem('exotrail_active_route_id');
+        if(map && mapReady && map.getSource('route')) map.getSource('route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: [] } });
+        renderWpMarkers();
+        renderEmptyState();
+      } else {
+        activateRoute(remaining[0]);
+      }
+    }
+    buildRouteLibraryUI();
+    toast('Route gelöscht');
+  }
+
 
   /* ---------------- Map setup (MapLibre + PMTiles) ---------------- */
   let map = null, meMarker = null, wpMarkers = [], mapReady = false;
@@ -521,6 +551,7 @@
   function renderWpMarkers(){
     wpMarkers.forEach(m => m.remove());
     wpMarkers = [];
+    if(!route) return;
     const nIdx = nextUnvisitedIndex();
     route.waypoints.forEach((w,i) => {
       const current = i === nIdx;
@@ -900,20 +931,41 @@
   }
 
   /* ---------------- Planungs-Modus: Punkte tippen, Wege statt Luftlinie ---------------- */
+  function pathLength(pts){ // pts = [[lat,lng], ...]
+    let d = 0;
+    for(let i=1;i<pts.length;i++) d += haversine(pts[i-1][0],pts[i-1][1], pts[i][0],pts[i][1]);
+    return d;
+  }
   async function fetchFootPath(a, b){
+    const direct = haversine(a.lat,a.lng, b.lat,b.lng);
+    const straight = [[a.lat,a.lng],[b.lat,b.lng]];
     try{
+      // radiuses=25 begrenzt, wie weit die API einen Punkt auf einen Weg
+      // "einschnappen" darf — verhindert, dass sie beim Wechsel Straße/Wanderweg
+      // auf einen völlig anderen, weiter entfernten Pfad ausweicht.
       const url = 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/'
-        + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=geojson';
+        + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=geojson&radiuses=25;25';
       const res = await fetch(url);
       if(!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if(data.code !== 'Ok' || !data.routes || !data.routes[0]) throw new Error('keine Route gefunden');
-      return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]); // GeoJSON [lng,lat] -> [lat,lng]
+      const coords = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]); // GeoJSON [lng,lat] -> [lat,lng]
+      // Sanity-Check: wenn der berechnete Weg mehr als das 2,5-fache der
+      // Direktverbindung ist (oder absolut >400m länger bei kurzer Distanz),
+      // ist das eher ein Umweg/Schleife im Routing-Graph als ein echter Weg —
+      // dann lieber direkt von Punkt zu Punkt statt komischer Umweg.
+      const routed = pathLength(coords);
+      if(routed > direct * 2.5 + 400){
+        toast('⚠️ Berechneter Weg sah nach Umweg/Schleife aus — direkt von Punkt zu Punkt verbunden');
+        return straight;
+      }
+      return coords;
     }catch(e){
-      toast('⚠️ Wege-Routing nicht verfügbar — gerade Linie verwendet');
-      return [[a.lat,a.lng],[b.lat,b.lng]];
+      toast('⚠️ Wege-Routing nicht verfügbar — direkt von Punkt zu Punkt verbunden');
+      return straight;
     }
   }
+
 
   function updatePlanningLine(){
     if(!map || !mapReady) return;
