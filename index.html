@@ -3,8 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>ExoTrail Navi · MapLibre-Test v0.7.0</title>
+<title>ExoTrail Navi · MapLibre v0.16.0</title>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
+<!--
+  ============================================================
+  EXOTRAIL NAVI — MapLibre-Kern (Runde 1)
+  ============================================================
+  Diese Datei ist Runde 1 der Migration von Leaflet auf
+  MapLibre GL + PMTiles: Kern-Navigation mit HUD/XP, Quest-
+  Karte, GPS-Geofencing, Ankunfts-Karten (TTS/Konfetti/Sound),
+  Navigationsmodus mit Auto-Follow, vereinfachten Einstellungen.
+
+  BEWUSST NICHT enthalten (kommt in Runde 2):
+    • Aufnahme-Modus ("Neue Route erstellen" / Hier markieren)
+    • Planungs-Modus ("Karte am Handy erstellen")
+    • Offline-Download-Button für Kartenkacheln
+  Diese Datei liest/schreibt dieselben localStorage-Keys wie
+  die bisherige exo-trail-navi.html (exotrail_routes_v1,
+  exotrail_active_route_id, exotrail_progress_<id>, ...) — neue
+  Routen bitte vorerst weiter dort aufnehmen/planen.
+  ============================================================
+-->
 <style>
   :root{
     --bg: #0c1210;
@@ -13,55 +32,83 @@
     --gold: #d9a53f;
     --gold-bright: #f0be5c;
     --mint: #6fd9a8;
+    --mint-bright: #8ef0c0;
     --coral: #ff8f66;
     --sky: #6fb3d9;
     --text: #f1efe4;
     --text-dim: #9a9d8f;
+    --text-faint: #5c6058;
     --danger: #ff7a63;
     --border: rgba(217,165,63,0.2);
+    --border-soft: rgba(241,239,228,0.09);
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body{ margin:0; padding:0; height:100%; background:var(--bg); color:var(--text); font-family:var(--sans); overscroll-behavior:none; }
+  html,body{ margin:0; padding:0; height:100%; background:var(--bg); color:var(--text); font-family:var(--sans); overscroll-behavior:none; user-select:none; -webkit-user-select:none; }
   #app{ position:fixed; inset:0; display:flex; flex-direction:column; }
 
+  /* ---------- Top bar / HUD ---------- */
   header{
-    flex:none; padding:12px 16px; display:flex; align-items:center; justify-content:space-between;
-    background:var(--bg-panel); border-bottom:1px solid var(--border); z-index:5;
+    flex:none; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:calc(env(safe-area-inset-top) + 12px) 16px 10px;
+    background:var(--bg-panel); border-bottom:1px solid var(--border); z-index:6;
   }
-  header .title{ font-weight:800; color:var(--gold-bright); font-size:14px; }
-  header .sub{ font-size:11px; color:var(--text-dim); margin-top:2px; }
-  header .badge{ font-size:10px; color:var(--bg); background:var(--gold); padding:3px 8px; border-radius:20px; font-weight:800; }
+  .brand{ display:flex; align-items:center; gap:10px; min-width:0; }
+  .mascot-avatar{ width:38px; height:38px; border-radius:50%; background:var(--bg-elevated); border:2px solid var(--gold); display:flex; align-items:center; justify-content:center; font-size:19px; flex-shrink:0; }
+  .brand-info{ min-width:0; }
+  .rank-name{ font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:34vw; }
+  .xp-bar-wrap{ width:110px; height:6px; border-radius:4px; background:var(--bg-elevated); margin-top:4px; overflow:hidden; }
+  .xp-bar-fill{ height:100%; background:linear-gradient(90deg, var(--gold), var(--mint-bright)); border-radius:4px; transition:width .5s ease; width:0%; }
+  .gps-pill{ display:flex; align-items:center; gap:6px; padding:6px 10px; border-radius:20px; background:var(--bg-elevated); border:1px solid var(--border-soft); flex-shrink:0; }
+  .gps-dot{ width:8px; height:8px; border-radius:50%; background:var(--text-faint); }
+  .gps-dot.live{ background:var(--mint-bright); box-shadow:0 0 6px var(--mint-bright); }
+  .gps-label{ font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); }
+  .icon-btn{ width:38px; height:38px; border-radius:12px; flex-shrink:0; background:var(--bg-elevated); border:1px solid var(--border-soft); display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer; }
+  .icon-btn:active{ background:var(--bg-panel); }
+  .icon-btn svg{ width:18px; height:18px; }
 
+  /* ---------- Map ---------- */
   #mapWrap{ flex:1; position:relative; min-height:0; }
   #map{ position:absolute; inset:0; }
+  .maplibregl-ctrl-attrib{ font-size:9px !important; }
 
   .map-btn{
     position:absolute; width:44px; height:44px; border-radius:50%;
     background:var(--bg-elevated); border:1.5px solid var(--border); color:var(--gold-bright);
     display:flex; align-items:center; justify-content:center; font-size:18px; cursor:pointer;
-    box-shadow:0 3px 10px rgba(0,0,0,.5); z-index:4;
+    box-shadow:0 3px 10px rgba(0,0,0,.5); z-index:5;
   }
-  #centerBtn{ right:12px; bottom:100px; }
-  #locateBtn{ right:12px; bottom:48px; }
   #northBtn{ right:12px; top:12px; }
+  #centerBtn{ right:12px; top:66px; }
+  #locateBtn{ right:12px; top:120px; }
 
-  #statusBar{
-    position:absolute; left:12px; bottom:12px; right:68px; z-index:4;
-    background:rgba(21,29,24,0.92); border:1px solid var(--border); border-radius:10px;
-    padding:10px 12px; font-size:12px; color:var(--text-dim); backdrop-filter:blur(6px);
+  .nav-exit-btn{
+    position:absolute; top:12px; left:12px; z-index:5;
+    background:rgba(12,18,16,0.88); border:1px solid var(--border); color:var(--text);
+    font-family:var(--sans); font-size:12px; font-weight:700; padding:9px 13px; border-radius:20px;
+    cursor:pointer; display:flex; align-items:center; gap:5px;
   }
-  #statusBar b{ color:var(--gold-bright); }
+  .nav-recenter-btn{
+    position:absolute; left:50%; transform:translateX(-50%); bottom:170px; z-index:5;
+    background:var(--mint); color:#0c1210; border:none; font-family:var(--sans);
+    font-size:13px; font-weight:800; padding:11px 18px; border-radius:24px;
+    cursor:pointer; display:flex; align-items:center; gap:6px;
+    box-shadow:0 4px 14px rgba(0,0,0,.5); animation:navpulse 1.6s infinite;
+  }
+  @keyframes navpulse{ 50%{ box-shadow:0 4px 14px rgba(111,217,168,.5); } }
 
-  .wp-pin{
-    display:flex; align-items:center; justify-content:center;
-    font-family:var(--mono); font-weight:800; border-radius:50%;
-    filter:drop-shadow(0 3px 7px rgba(0,0,0,.6));
+  .tile-warning{
+    display:none; position:absolute; top:12px; left:64px; right:64px; z-index:5;
+    background:rgba(28,20,10,0.92); border:1px solid var(--gold); color:var(--gold-bright);
+    font-size:11.5px; font-weight:700; padding:9px 12px; border-radius:12px;
+    align-items:center; gap:6px; box-shadow:0 4px 12px rgba(0,0,0,.4); text-align:center;
   }
+
+  .wp-pin-wrap{ position:relative; }
+  .wp-pin{ display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:800; border-radius:50%; filter:drop-shadow(0 3px 7px rgba(0,0,0,.6)); }
   .wp-pin.current{ font-size:15px; width:44px; height:44px; background:var(--bg-elevated); border:2.5px solid var(--gold); color:var(--gold-bright); }
   .wp-pin.dim{ font-size:9.5px; width:24px; height:24px; background:rgba(28,31,21,0.75); border:1.5px solid rgba(217,165,63,0.35); color:var(--text-dim); opacity:.75; }
-  .wp-pin-wrap{ position:relative; }
   .wp-pin-ring{ position:absolute; inset:-6px; border-radius:50%; border:2px solid var(--gold-bright); animation:ringpulse 1.8s infinite; }
   @keyframes ringpulse{ 0%{ transform:scale(.8); opacity:1; } 100%{ transform:scale(1.6); opacity:0; } }
   .wp-tooltip-box{
@@ -70,317 +117,778 @@
     border:1px solid var(--border); border-radius:9px; font-size:12px; font-weight:800;
     padding:5px 10px; box-shadow:0 3px 10px rgba(0,0,0,.45); white-space:nowrap; pointer-events:none;
   }
-
-  .me-wrap{ position:relative; width:16px; height:16px; }
   .me-dot{ width:16px; height:16px; border-radius:50%; background:var(--sky); border:3px solid #fff; box-shadow:0 0 0 4px rgba(111,179,217,0.3); }
-  .me-arrow{
-    position:absolute; top:-13px; left:50%; transform-origin:50% 21px;
-    transition: transform .25s linear;
-    width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent;
-    border-bottom:14px solid var(--sky); filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));
-  }
 
-  .maplibregl-ctrl-attrib{ font-size:9px !important; }
-
-  #emptyState{
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    flex-direction:column; gap:10px; text-align:center; padding:30px; z-index:3;
-  }
+  #emptyState{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; text-align:center; padding:30px; z-index:4; }
   #emptyState h2{ color:var(--gold-bright); font-size:16px; margin:0; }
   #emptyState p{ color:var(--text-dim); font-size:13px; margin:0; max-width:280px; }
+
+  /* ---------- Quest overlay (bottom sheet over the map) ---------- */
+  #questOverlay{
+    position:absolute; left:10px; right:10px; bottom:10px; z-index:5;
+    background:rgba(21,29,24,0.94); border:1px solid var(--border); border-radius:20px;
+    padding:16px 16px 14px; backdrop-filter:blur(6px); box-shadow:0 6px 20px rgba(0,0,0,.4);
+  }
+  #questOverlay.compact{ padding:10px 14px; }
+  .quest-eyebrow{ font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--mint-bright); margin-bottom:6px; display:flex; align-items:center; gap:6px; }
+  .quest-dist{ font-family:var(--mono); font-size:38px; font-weight:700; line-height:1; letter-spacing:-.02em; }
+  .quest-dist span{ font-size:16px; color:var(--text-dim); font-weight:400; margin-left:4px; }
+  .quest-name{ font-size:14px; color:var(--text-dim); margin-top:6px; }
+  .quest-name b{ color:var(--text); }
+  .quest-row{ display:flex; align-items:center; gap:12px; }
+  .quest-row .quest-dist{ font-size:26px; }
+  .chips-scroll{ display:flex; gap:8px; overflow-x:auto; padding:2px 2px 4px; margin:10px 0 2px; }
+  .chips-scroll::-webkit-scrollbar{ display:none; }
+  .step-chip{ flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:5px; width:66px; padding:9px 6px; border-radius:14px; background:var(--bg-panel); border:1px solid var(--border-soft); opacity:.55; }
+  .step-chip.current{ opacity:1; border-color:var(--gold); background:var(--bg-elevated); box-shadow:0 0 0 2px var(--gold); }
+  .step-chip.done{ opacity:.9; border-color:rgba(111,217,168,0.4); }
+  .step-chip-icon{ font-size:20px; }
+  .step-chip-name{ font-size:10px; text-align:center; line-height:1.2; color:var(--text-dim); font-weight:600; }
+  .step-chip.current .step-chip-name{ color:var(--text); font-weight:700; }
+  .btn{ padding:14px; border-radius:14px; border:none; font-size:14.5px; font-weight:800; cursor:pointer; font-family:var(--sans); }
+  .btn-primary{ background:var(--gold); color:#181405; width:100%; margin-top:12px; }
+  .btn-primary:active{ background:var(--gold-bright); transform:scale(.98); }
+  .fallback-btn{ margin-top:8px; width:100%; padding:11px; border-radius:12px; background:transparent; border:1px dashed var(--border-soft); color:var(--text-faint); font-family:var(--sans); font-size:12px; cursor:pointer; }
+  .fallback-btn:active{ background:var(--bg-panel); }
+  .cancel-link{ margin-top:8px; width:100%; padding:11px; border-radius:12px; background:transparent; border:none; color:var(--danger); font-family:var(--sans); font-size:12px; cursor:pointer; }
+
+  /* ---------- Trigger overlay ---------- */
+  .overlay{ position:fixed; inset:0; z-index:950; background:rgba(6,9,7,0.82); backdrop-filter:blur(5px); display:flex; align-items:flex-end; justify-content:center; opacity:0; pointer-events:none; transition:opacity .35s; }
+  .overlay.show{ opacity:1; pointer-events:auto; }
+  .card{ width:100%; max-width:520px; max-height:88vh; overflow-y:auto; background:var(--bg-panel); border:1px solid var(--border); border-radius:28px 28px 0 0; padding:26px 22px calc(env(safe-area-inset-bottom) + 22px); transform:translateY(30px); transition:transform .4s cubic-bezier(.2,.9,.3,1.1); }
+  .overlay.show .card{ transform:translateY(0); }
+  .mascot-bubble{ display:flex; align-items:flex-start; gap:12px; margin-bottom:18px; }
+  .mascot-face{ width:52px; height:52px; border-radius:50%; background:var(--bg-elevated); border:2px solid var(--gold); display:flex; align-items:center; justify-content:center; font-size:26px; flex-shrink:0; }
+  .bubble{ background:var(--bg-elevated); border:1px solid var(--border-soft); border-radius:16px 16px 16px 4px; padding:12px 14px; font-size:13px; color:var(--gold-bright); font-weight:700; letter-spacing:.02em; }
+  .card-title{ font-size:23px; font-weight:800; line-height:1.32; margin-bottom:16px; }
+  .xp-pop{ display:inline-flex; align-items:center; gap:6px; background:rgba(111,217,168,0.15); border:1px solid rgba(111,217,168,0.4); color:var(--mint-bright); font-family:var(--mono); font-size:13px; font-weight:700; padding:6px 12px; border-radius:20px; margin-bottom:16px; }
+  .action-box{ background:linear-gradient(135deg, rgba(217,165,63,0.16), rgba(255,143,102,0.08)); border:1px solid var(--border); border-radius:16px; padding:15px 16px; margin-bottom:14px; display:flex; align-items:center; gap:13px; }
+  .action-box-icon{ font-size:24px; flex-shrink:0; }
+  .action-box-text{ font-size:14px; color:var(--text); line-height:1.4; font-weight:600; }
+  .funfact{ background:rgba(111,179,217,0.08); border:1px solid rgba(111,179,217,0.25); border-radius:14px; padding:12px 14px; margin-bottom:20px; font-size:13.5px; color:var(--text-dim); line-height:1.55; }
+  .funfact-label{ font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--sky); margin-bottom:5px; }
+  .card-actions{ display:flex; gap:10px; }
+  .btn-ghost{ background:transparent; border:1px solid var(--border-soft); color:var(--text-dim); flex:1; display:flex; align-items:center; justify-content:center; gap:8px; padding:14px; border-radius:14px; cursor:pointer; font-family:var(--sans); font-size:13.5px; font-weight:700; }
+  .btn-ghost svg{ width:18px; height:18px; }
+
+  /* ---------- Finish / empty screens inside quest overlay ---------- */
+  .finish{ display:flex; flex-direction:column; align-items:center; text-align:center; }
+  .finish-mascot{ font-size:44px; margin-bottom:4px; }
+  .finish-eyebrow{ font-family:var(--mono); font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--mint-bright); margin-bottom:6px; }
+  .finish-title{ font-size:20px; font-weight:800; margin-bottom:4px; }
+  .finish-rank{ font-size:13px; color:var(--gold-bright); font-weight:700; margin-bottom:14px; }
+  .stats{ display:grid; grid-template-columns:1fr 1fr; gap:8px; width:100%; margin-bottom:14px; }
+  .stat{ background:var(--bg-panel); border:1px solid var(--border-soft); border-radius:14px; padding:11px; }
+  .stat-val{ font-family:var(--mono); font-size:19px; font-weight:700; color:var(--gold-bright); }
+  .stat-label{ font-size:9.5px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.08em; margin-top:3px; }
+  .row-sub{ font-size:11.5px; color:var(--text-dim); margin-top:2px; }
+
+  /* ---------- Settings drawer ---------- */
+  .drawer{ position:fixed; inset:0; z-index:900; background:var(--bg); transform:translateX(100%); transition:transform .3s ease; display:flex; flex-direction:column; }
+  .drawer.open{ transform:translateX(0); }
+  .drawer-head{ display:flex; align-items:center; justify-content:space-between; padding:calc(env(safe-area-inset-top) + 16px) 18px 16px; border-bottom:1px solid var(--border-soft); flex-shrink:0; }
+  .drawer-title{ font-size:17px; font-weight:800; }
+  .drawer-body{ flex:1; overflow-y:auto; padding:18px; }
+  .section-label{ font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold-bright); margin:22px 0 10px; }
+  .section-label:first-child{ margin-top:0; }
+  .field{ margin-bottom:18px; }
+  .field label{ display:block; font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; }
+  .field select{ width:100%; background:var(--bg-panel); border:1px solid var(--border-soft); color:var(--text); border-radius:12px; padding:12px; font-family:var(--mono); font-size:13px; }
+  .row{ display:flex; align-items:center; justify-content:space-between; padding:13px 0; border-bottom:1px solid var(--border-soft); }
+  .row-label{ font-size:14px; }
+  .switch{ width:46px; height:26px; border-radius:13px; background:var(--bg-elevated); border:1px solid var(--border-soft); position:relative; cursor:pointer; flex-shrink:0; }
+  .switch.on{ background:var(--mint); border-color:var(--mint); }
+  .switch::after{ content:''; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:var(--text-dim); transition:transform .2s; }
+  .switch.on::after{ transform:translateX(20px); background:#0c1210; }
+  .btn-block{ width:100%; padding:14px; border-radius:14px; background:var(--bg-panel); border:1px solid var(--border-soft); color:var(--text); font-size:14px; margin-top:8px; cursor:pointer; font-weight:600; }
+  .btn-block.accent{ background:linear-gradient(135deg, rgba(217,165,63,.25), rgba(111,217,168,.15)); border-color:var(--gold); color:var(--gold-bright); }
+  .btn-block.danger{ color:var(--danger); border-color:rgba(255,122,99,0.3); }
+  .btn-block[disabled]{ opacity:.4; pointer-events:none; }
+  .status-line{ font-family:var(--mono); font-size:11px; color:var(--text-faint); padding:10px 0; line-height:1.6; }
+  .route-item{ background:var(--bg-panel); border:1px solid var(--border-soft); border-radius:16px; padding:13px 15px; margin-top:10px; }
+  .route-item.active{ border-color:var(--mint); background:var(--bg-elevated); }
+  .route-item-top{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .route-item-name{ font-weight:800; font-size:14.5px; flex:1; }
+  .route-badge{ font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; background:rgba(111,217,168,0.18); color:var(--mint-bright); border:1px solid rgba(111,217,168,0.4); padding:3px 8px; border-radius:8px; }
+  .route-item-meta{ font-family:var(--mono); font-size:10.5px; color:var(--text-faint); margin-top:5px; }
+  .route-item-actions{ display:flex; gap:6px; margin-top:9px; }
+  .route-item-actions button{ background:var(--bg-elevated); border:1px solid var(--border-soft); color:var(--text-dim); border-radius:9px; padding:7px 11px; font-size:12.5px; cursor:pointer; font-family:var(--sans); }
+  .roadmap-note{ background:rgba(111,179,217,0.08); border:1px solid rgba(111,179,217,0.25); border-radius:14px; padding:12px 14px; font-size:12px; color:var(--text-dim); line-height:1.55; margin-bottom:8px; }
+
+  .toast{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--bg-elevated); border:1px solid var(--border); color:var(--text); padding:12px 20px; border-radius:14px; font-size:13px; z-index:950; opacity:0; pointer-events:none; transition:all .3s; font-weight:600; }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+  #confettiCanvas{ position:fixed; inset:0; z-index:1000; pointer-events:none; }
+  ::-webkit-scrollbar{ width:0; }
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <div>
-      <div class="title" id="routeTitle">Lädt…</div>
-      <div class="sub" id="routeSub"></div>
-      <div class="sub" id="routeCountNote" style="margin-top:2px;"></div>
-      <select id="routeSelector" style="margin-top:6px; background:var(--bg-elevated); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:11px; padding:3px 6px;"></select>
-      <button id="roesrathTestBtn" style="margin-top:6px; display:block; background:var(--gold); color:#141311; border:none; border-radius:6px; font-size:11px; font-weight:800; padding:5px 10px; cursor:pointer;">🧪 Rösrath-Test anzeigen (unabhängig von Bibliothek)</button>
+    <div class="brand">
+      <div class="mascot-avatar" id="mascotAvatar">👨‍🚀</div>
+      <div class="brand-info">
+        <div class="rank-name" id="rankName">Bodenpersonal</div>
+        <div class="xp-bar-wrap"><div class="xp-bar-fill" id="xpFill"></div></div>
+      </div>
     </div>
-    <div class="badge">MapLibre v0.7.0</div>
+    <div class="gps-pill"><div class="gps-dot" id="gpsDot"></div><div class="gps-label" id="gpsLabel">GPS</div></div>
+    <div class="icon-btn" id="settingsBtn" aria-label="Einstellungen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 005 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06A2 2 0 117.05 4.3l.06.06A1.65 1.65 0 008.93 4.7 1.65 1.65 0 0010 3.19V3a2 2 0 014 0v.09c0 .68.39 1.29 1 1.51.63.24 1.34.11 1.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06c-.44.48-.57 1.19-.33 1.82.22.61.83 1 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    </div>
   </header>
   <div id="mapWrap">
     <div id="map"></div>
     <button class="map-btn" id="northBtn" title="Karte Norden">🧭</button>
     <button class="map-btn" id="centerBtn" title="Route zentrieren">🎯</button>
     <button class="map-btn" id="locateBtn" title="Mein Standort">📍</button>
-    <div id="statusBar">Karte wird geladen…</div>
+    <div id="tileWarning" class="tile-warning">📡 Kartenkacheln laden nicht — offline oder kein Empfang</div>
+    <button id="navExitBtn" class="nav-exit-btn" style="display:none;">✕ Navigation beenden</button>
+    <button id="navRecenterBtn" class="nav-recenter-btn" style="display:none;">🎯 Zurück zur Navigation</button>
     <div id="emptyState" style="display:none;">
-      <h2>Keine Route aktiv</h2>
-      <p>Öffne zuerst die normale ExoTrail-Navi-App und wähle oder erstelle eine Route — diese Testversion liest dieselben Daten aus dem Browser-Speicher.</p>
+      <h2>Noch keine Route</h2>
+      <p>Lege deine erste Route in der bisherigen ExoTrail-Navi-App an (Aufnehmen oder Planen) — diese Testversion liest dieselben Daten aus dem Browser-Speicher.</p>
+      <button class="btn btn-primary" id="emptyStateSettingsBtn" style="margin-top:6px;">⚙️ Einstellungen öffnen</button>
     </div>
+    <div id="questOverlay"></div>
   </div>
 </div>
+
+<div class="overlay" id="overlay"><div class="card" id="triggerCard"></div></div>
+
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div class="drawer-title">Einstellungen <span style="font-family:var(--mono); font-size:11px; color:var(--text-faint); font-weight:400;">v0.16.0</span></div>
+    <div class="icon-btn" id="closeDrawer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg></div>
+  </div>
+  <div class="drawer-body">
+    <div class="section-label">Meine Routen</div>
+    <div id="routeLibraryList"></div>
+
+    <div class="section-label">Sprachausgabe &amp; Sound</div>
+    <div class="row"><div class="row-label">Sprachansage (TTS)</div><div class="switch" id="voiceSwitch"></div></div>
+    <div class="row"><div class="row-label">Sound-Effekte</div><div class="switch" id="soundSwitch"></div></div>
+    <div class="field" style="margin-top:14px;"><label>Stimme</label><select id="voiceSelect"></select></div>
+
+    <div class="section-label">Status</div>
+    <div class="status-line" id="statusLine"></div>
+
+    <div class="section-label">Kommt in Runde 2</div>
+    <div class="roadmap-note">Aufnahme-Modus, Planungs-Modus und der Offline-Download-Button fehlen hier noch bewusst — die gibt's aktuell weiter in der bisherigen App. Kommt als Nächstes.</div>
+    <button class="btn-block" disabled>➕ Neue Route erstellen (laufen)</button>
+    <button class="btn-block" disabled>🗺️ Karte am Handy erstellen</button>
+    <button class="btn-block" disabled>Karte offline speichern</button>
+  </div>
+</div>
+
+<canvas id="confettiCanvas"></canvas>
+<div class="toast" id="toast"></div>
 
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
 <script src="https://unpkg.com/@protomaps/basemaps@5/dist/basemaps.js" crossorigin="anonymous"></script>
 <script>
-// ---------------- Config ----------------
-const PMTILES_URL = 'https://ormpszktwwiahjooukjk.supabase.co/storage/v1/object/public/exotrail-maps/bergisches-land.pmtiles';
+(function(){
 
-// ---------------- Route data (reads the SAME localStorage as the main app) ----------------
-function loadRouteLibrary(){
-  try{ return JSON.parse(localStorage.getItem('exotrail_routes_v1') || '{}'); }
-  catch(e){ return {}; }
-}
-function loadProgress(routeId){
-  try{ const p = localStorage.getItem('exotrail_progress_'+routeId); return p ? JSON.parse(p) : null; }
-  catch(e){ return null; }
-}
+  const APP_VERSION = "0.16.0";
+  const PMTILES_URL = 'https://ormpszktwwiahjooukjk.supabase.co/storage/v1/object/public/exotrail-maps/bergisches-land.pmtiles';
 
-const routeLibrary = loadRouteLibrary();
-const activeId = localStorage.getItem('exotrail_active_route_id');
-const testOverrideId = localStorage.getItem('exotrail_maplibre_test_route_id');
-
-// Hardcoded Rösrath fallback route — completely independent of whatever is (or
-// isn't) in this browser's localStorage. Lets us verify the map/color fix
-// works in the right place regardless of which device/profile has the real data.
-const ROESRATH_TEST_ROUTE = {
-  id: '__roesrath_test__',
-  name: 'Rösrath Test (fest einprogrammiert)',
-  waypoints: [
-    { id:'w0', type:'start', name:'Start Rösrath', lat:50.8890, lng:7.2100 },
-    { id:'w1', type:'stop', name:'Wegpunkt 1', lat:50.8950, lng:7.2200 },
-    { id:'w2', type:'stop', name:'Wegpunkt 2', lat:50.9050, lng:7.2350 },
-    { id:'w3', type:'finish', name:'Ziel Rösrath', lat:50.9150, lng:7.2500 }
-  ]
-};
-if(testOverrideId === '__roesrath_test__') routeLibrary['__roesrath_test__'] = ROESRATH_TEST_ROUTE;
-
-const routeId = (testOverrideId && routeLibrary[testOverrideId]) ? testOverrideId
-  : (routeLibrary[activeId] ? activeId : Object.keys(routeLibrary)[0]);
-const route = routeLibrary[routeId] || null;
-
-// Populate the route selector so testing isn't tied to whichever route the
-// main app currently considers "active" — handy when you have both a
-// vacation-testing route and your real Rösrath route in the same library.
-const selectorEl = document.getElementById('routeSelector');
-const roesrathBtn = document.getElementById('roesrathTestBtn');
-document.getElementById('routeCountNote').textContent = Object.keys(routeLibrary).filter(k=>k!=='__roesrath_test__').length + ' Route(n) in dieser Browser-Bibliothek gefunden.';
-const libKeys = Object.keys(routeLibrary);
-if(libKeys.length > 1){
-  selectorEl.innerHTML = libKeys.map(id =>
-    `<option value="${id}" ${id===routeId?'selected':''}>${(routeLibrary[id].name||id)} (${routeLibrary[id].waypoints.length} WP)</option>`
-  ).join('');
-  selectorEl.onchange = () => {
-    localStorage.setItem('exotrail_maplibre_test_route_id', selectorEl.value);
-    location.reload();
+  const TYPE_EMOJI = { start:"🚀", mode:"⚡", checkpoint:"📍", info:"💡", finish:"🏁" };
+  const TYPE_XP    = { start:10, mode:25, checkpoint:15, info:10, finish:50 };
+  const MASCOT_LINES = {
+    start:"Mission Briefing: ",
+    mode:"Neue Order von der Basis: ",
+    checkpoint:"Zwischenstopp erreicht. ",
+    info:"Kurzer Funkspruch: ",
+    finish:"Mission erfüllt. "
   };
-} else {
-  selectorEl.style.display = 'none';
-}
-roesrathBtn.onclick = () => {
-  localStorage.setItem('exotrail_maplibre_test_route_id', '__roesrath_test__');
-  location.reload();
-};
-const progress = route ? (loadProgress(route.id) || { visited: [] }) : { visited: [] };
+  const RANKS = [
+    { min:0,   name:"Bodenpersonal",         emoji:"👨‍🚀" },
+    { min:20,  name:"Kadett",                emoji:"🌱" },
+    { min:60,  name:"Rover-Pilot",           emoji:"🛰️" },
+    { min:120, name:"Mondläufer",            emoji:"🌙" },
+    { min:200, name:"Mars-Anwärter",         emoji:"🔴" },
+    { min:300, name:"Marsianer",             emoji:"👽" },
+    { min:450, name:"Kommandant der Mission",emoji:"⭐" }
+  ];
 
-// ---------------- Geo helpers (copied from the main app) ----------------
-function haversine(lat1,lon1,lat2,lon2){
-  const R=6371000, toRad=d=>d*Math.PI/180;
-  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
-  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-}
-function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function getCurrentPositionAsync(){
-  return new Promise((resolve,reject) => {
-    if(!('geolocation' in navigator)) return reject(new Error('Kein GPS verfügbar'));
-    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
-  });
-}
-function nextUnvisitedIndex(){ return route.waypoints.findIndex(w => !progress.visited.includes(w.id)); }
-function waypointLabel(index){
-  const w = route.waypoints[index];
-  if(w.type === 'start') return 'Start';
-  if(w.type === 'finish') return 'Ziel';
-  let counter = 0;
-  for(let j=0;j<=index;j++){
-    const t = route.waypoints[j].type;
-    if(t === 'start' || t === 'finish') continue;
-    counter++;
+  /* ---------------- Persistence (same keys as exo-trail-navi.html) ---------------- */
+  function loadRouteLibrary(){ try{ return JSON.parse(localStorage.getItem('exotrail_routes_v1') || '{}'); }catch(e){ return {}; } }
+  function saveRouteLibraryRef(){ localStorage.setItem('exotrail_routes_v1', JSON.stringify(routeLibrary)); }
+  function loadProgress(routeId){ try{ const p = localStorage.getItem('exotrail_progress_'+routeId); return p ? JSON.parse(p) : null; }catch(e){ return null; } }
+  function saveProgress(){ localStorage.setItem('exotrail_progress_'+route.id, JSON.stringify(progress)); }
+
+  let routeLibrary = loadRouteLibrary();
+  const activeId = localStorage.getItem('exotrail_active_route_id');
+  let routeId = routeLibrary[activeId] ? activeId : Object.keys(routeLibrary)[0];
+  let route = routeLibrary[routeId] || null;
+  let progress = route ? (loadProgress(route.id) || { visited: [], startedAt: null, xp: 0 }) : { visited: [], startedAt: null, xp: 0 };
+
+  let voiceOn = localStorage.getItem('exotrail_voiceon') !== '0';
+  let soundOn = localStorage.getItem('exotrail_soundon') !== '0';
+  let defaultRadius = parseInt(localStorage.getItem('exotrail_radius') || '30');
+  let selectedVoiceURI = localStorage.getItem('exotrail_voice') || '';
+  let voices = [];
+  let watchId = null;
+  let navModeActive = false;
+  let autoFollow = true;
+  let programmaticMove = false;
+  let overlayOpen = false;
+  let overlayAutoCloseTimer = null;
+
+  const els = {
+    gpsDot: document.getElementById('gpsDot'),
+    gpsLabel: document.getElementById('gpsLabel'),
+    overlay: document.getElementById('overlay'),
+    card: document.getElementById('triggerCard'),
+    toast: document.getElementById('toast'),
+    rankName: document.getElementById('rankName'),
+    xpFill: document.getElementById('xpFill'),
+    mascotAvatar: document.getElementById('mascotAvatar'),
+    quest: document.getElementById('questOverlay'),
+  };
+  const drawerEl = document.getElementById('drawer');
+
+  /* ---------------- Helpers ---------------- */
+  function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function toast(msg){ els.toast.textContent = msg; els.toast.classList.add('show'); setTimeout(()=> els.toast.classList.remove('show'), 2200); }
+  function haversine(lat1,lon1,lat2,lon2){
+    const R=6371000, toRad=d=>d*Math.PI/180;
+    const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+    const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
   }
-  return String(counter).padStart(2,'0');
-}
-function routeLineCoords(r){
-  // GeoJSON wants [lng,lat], the app's stored data is {lat,lng} — swap here.
-  const pts = (r.track && r.track.length > 1) ? r.track : r.waypoints.map(w => [w.lat, w.lng]);
-  return pts.map(p => [p[1], p[0]]);
-}
-
-// ---------------- Empty-route guard ----------------
-if(!route){
-  document.getElementById('emptyState').style.display = 'flex';
-  document.getElementById('statusBar').style.display = 'none';
-  document.getElementById('routeTitle').textContent = 'Keine Route';
-  throw new Error('no route');
-}
-document.getElementById('routeTitle').textContent = route.name || 'Route';
-const wpCoordSummary = route.waypoints.map(w => w.lat.toFixed(2)+','+w.lng.toFixed(2)).join(' · ');
-document.getElementById('routeSub').textContent = route.waypoints.length + ' Wegpunkte · ' + wpCoordSummary;
-
-// ---------------- PMTiles + MapLibre setup ----------------
-// Standard, minimal integration pattern (confirmed working via isolated test) —
-// no manually-created separate PMTiles instance, that was likely conflicting
-// with MapLibre's own internal instance for the same URL.
-const protocol = new pmtiles.Protocol();
-maplibregl.addProtocol('pmtiles', protocol.tile);
-
-setTimeout(() => {
-  if(document.getElementById('statusBar').textContent.includes('warte auf Kartendaten')){
-    document.getElementById('statusBar').innerHTML =
-      '⚠️ Lädt noch (länger als erwartet) — Datei/Server sind bestätigt in Ordnung, kann an einer langsameren Verbindung liegen.';
+  function fmtDist(m){ if(m < 1000) return { val: Math.round(m), unit:'m' }; return { val: (m/1000).toFixed(1), unit:'km' }; }
+  function getCurrentPositionAsync(){
+    return new Promise((resolve,reject) => {
+      if(!('geolocation' in navigator)) return reject(new Error('Kein GPS verfügbar'));
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
+    });
   }
-}, 25000);
-
-let generatedLayers;
-try{
-  generatedLayers = basemaps.layers('protomaps', basemaps.namedFlavor('light'), { lang:'de' });
-}catch(e){
-  console.error('basemaps.layers() failed:', e);
-  generatedLayers = [{ id:'bg-fallback', type:'background', paint:{ 'background-color':'#eee' } }];
-}
-
-const style = {
-  version: 8,
-  glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
-  sprite: 'https://protomaps.github.io/basemaps-assets/sprites/v4/light',
-  sources: {
-    protomaps: {
-      type: 'vector',
-      url: 'pmtiles://' + PMTILES_URL,
-      attribution: '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a> Mitwirkende'
+  function routeLineCoords(r){
+    const pts = (r.track && r.track.length > 1) ? r.track : r.waypoints.map(w => [w.lat, w.lng]);
+    return pts.map(p => [p[1], p[0]]); // GeoJSON = [lng,lat]
+  }
+  function waypointLabel(index){
+    const w = route.waypoints[index];
+    if(w.type === 'start') return 'Start';
+    if(w.type === 'finish') return 'Ziel';
+    let counter = 0;
+    for(let j=0;j<=index;j++){
+      const t = route.waypoints[j].type;
+      if(t === 'start' || t === 'finish') continue;
+      counter++;
     }
-  },
-  layers: generatedLayers
-};
+    return String(counter).padStart(2,'0');
+  }
+  function nextUnvisitedIndex(){ return route.waypoints.findIndex(w => !progress.visited.includes(w.id)); }
 
-const startWp = route.waypoints.find(w => w.type === 'start') || route.waypoints[0];
-const map = new maplibregl.Map({
-  container: 'map',
-  style,
-  center: [startWp.lng, startWp.lat],
-  zoom: 14,
-  pitch: 0,
-  attributionControl: { compact: true }
-  // touchZoomRotate + dragRotate are ON by default — combined pinch-zoom +
-  // two-finger-rotate, native, no custom gesture code needed at all.
-});
+  /* ---------------- Rank / XP ---------------- */
+  function rankFor(xp){ let r = RANKS[0]; for(const cand of RANKS){ if(xp >= cand.min) r = cand; } return r; }
+  function rankProgress(xp){
+    const idx = RANKS.findIndex(r => r === rankFor(xp));
+    const cur = RANKS[idx], next = RANKS[idx+1];
+    if(!next) return 100;
+    return Math.min(100, Math.round(((xp - cur.min) / (next.min - cur.min)) * 100));
+  }
+  function updateHUD(){
+    const rank = rankFor(progress.xp);
+    els.rankName.textContent = rank.name;
+    els.mascotAvatar.textContent = rank.emoji;
+    els.xpFill.style.width = rankProgress(progress.xp) + '%';
+  }
 
-let meMarker = null;
-let wpMarkers = [];
+  /* ---------------- Route library UI (select / activate existing routes) ---------------- */
+  function activateRoute(id){
+    const r = routeLibrary[id];
+    if(!r) return;
+    route = r;
+    localStorage.setItem('exotrail_active_route_id', id);
+    progress = loadProgress(id) || { visited: [], startedAt: null, xp: 0 };
+    saveProgress();
+    if(map){
+      map.getSource('route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: routeLineCoords(route) } });
+      renderWpMarkers();
+      fitRoute();
+    }
+    renderQuest();
+    buildRouteLibraryUI();
+  }
+  function buildRouteLibraryUI(){
+    const wrap = document.getElementById('routeLibraryList');
+    if(!wrap) return;
+    const ids = Object.keys(routeLibrary).sort((a,b) => (routeLibrary[b].updatedAt||0) - (routeLibrary[a].updatedAt||0));
+    if(ids.length === 0){ wrap.innerHTML = '<div class="row-sub">Noch keine Routen in dieser Browser-Bibliothek.</div>'; return; }
+    wrap.innerHTML = ids.map(id => {
+      const r = routeLibrary[id];
+      const isActive = route && route.id === id;
+      return `<div class="route-item ${isActive?'active':''}">
+        <div class="route-item-top">
+          <span class="route-item-name">${esc(r.name)}</span>
+          ${isActive?'<span class="route-badge">AKTIV</span>':''}
+        </div>
+        <div class="route-item-meta">${(r.waypoints||[]).length} Punkte${r.updatedAt ? ' · zuletzt ' + new Date(r.updatedAt).toLocaleDateString('de-DE') : ''}</div>
+        <div class="route-item-actions"><button data-id="${id}">▶️ Aktivieren</button></div>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-id]').forEach(btn => {
+      btn.onclick = () => { activateRoute(btn.dataset.id); toast('"'+routeLibrary[btn.dataset.id].name+'" ist jetzt aktiv'); };
+    });
+  }
 
-map.on('load', () => {
-  document.getElementById('statusBar').textContent = 'Stil geladen · warte auf Kartendaten…';
+  /* ---------------- Map setup (MapLibre + PMTiles) ---------------- */
+  let map = null, meMarker = null, wpMarkers = [];
 
-  // Route casing (white outline) + route line (red), as two GeoJSON line layers.
-  const routeGeojson = {
-    type: 'Feature',
-    geometry: { type: 'LineString', coordinates: routeLineCoords(route) }
+  function initMap(){
+    const protocol = new pmtiles.Protocol();
+    maplibregl.addProtocol('pmtiles', protocol.tile);
+
+    let generatedLayers;
+    try{ generatedLayers = basemaps.layers('protomaps', basemaps.namedFlavor('light'), { lang:'de' }); }
+    catch(e){ console.error('basemaps.layers() failed:', e); generatedLayers = [{ id:'bg-fallback', type:'background', paint:{ 'background-color':'#eee' } }]; }
+
+    const style = {
+      version: 8,
+      glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
+      sprite: 'https://protomaps.github.io/basemaps-assets/sprites/v4/light',
+      sources: { protomaps: { type:'vector', url:'pmtiles://' + PMTILES_URL, attribution:'<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a> Mitwirkende' } },
+      layers: generatedLayers
+    };
+
+    const startWp = route.waypoints.find(w => w.type === 'start') || route.waypoints[0];
+    map = new maplibregl.Map({
+      container: 'map', style,
+      center: [startWp.lng, startWp.lat], zoom: 14, pitch: 0,
+      attributionControl: { compact: true }
+      // touchZoomRotate + dragRotate sind standardmäßig an — freies Zwei-Finger-
+      // Drehen wie in v0.15.0 der alten App, hier ganz ohne eigenen Gesture-Code.
+    });
+
+    let tileErrorCount = 0;
+    map.on('error', (e) => {
+      tileErrorCount++;
+      if(tileErrorCount > 2) document.getElementById('tileWarning').style.display = 'flex';
+      console.error('MapLibre error:', e);
+    });
+
+    map.on('load', () => {
+      map.addSource('route', { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates: routeLineCoords(route) } } });
+      map.addLayer({ id:'route-casing', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#ffffff','line-width':9,'line-opacity':0.35 } });
+      map.addLayer({ id:'route-line', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#6fb3d9','line-width':5,'line-opacity':0.95 } });
+      renderWpMarkers();
+      fitRoute();
+    });
+
+    map.on('dragstart', () => { if(!programmaticMove && navModeActive){ autoFollow = false; updateNavRecenterVisibility(); } });
+  }
+
+  function renderWpMarkers(){
+    wpMarkers.forEach(m => m.remove());
+    wpMarkers = [];
+    const nIdx = nextUnvisitedIndex();
+    route.waypoints.forEach((w,i) => {
+      const current = i === nIdx;
+      const label = waypointLabel(i);
+      const wrap = document.createElement('div');
+      wrap.className = 'wp-pin-wrap';
+      wrap.innerHTML =
+        (current ? '<div class="wp-pin-ring"></div>' : '') +
+        '<div class="wp-pin ' + (current ? 'current' : 'dim') + '">' + label + '</div>' +
+        (current ? '<div class="wp-tooltip-box">' + esc(w.name) + '</div>' : '');
+      const marker = new maplibregl.Marker({ element: wrap, anchor:'center' }).setLngLat([w.lng, w.lat]).addTo(map);
+      wpMarkers.push(marker);
+    });
+  }
+
+  function fitRoute(){
+    const lats = route.waypoints.map(w=>w.lat), lngs = route.waypoints.map(w=>w.lng);
+    const bounds = [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]];
+    programmaticMove = true;
+    map.fitBounds(bounds, { padding:70, duration:400 });
+    setTimeout(() => programmaticMove = false, 500);
+  }
+
+  function updateMeMarker(lat,lng){
+    if(!meMarker){
+      const dot = document.createElement('div');
+      dot.className = 'me-dot';
+      meMarker = new maplibregl.Marker({ element: dot, anchor:'center' }).setLngLat([lng,lat]).addTo(map);
+    } else {
+      meMarker.setLngLat([lng,lat]);
+    }
+  }
+
+  async function locateMe(){
+    const btn = document.getElementById('locateBtn');
+    const original = btn.textContent;
+    btn.textContent = '⏳';
+    try{
+      const pos = await getCurrentPositionAsync();
+      updateMeMarker(pos.coords.latitude, pos.coords.longitude);
+      programmaticMove = true;
+      map.flyTo({ center:[pos.coords.longitude, pos.coords.latitude], zoom:16, duration:600 });
+      setTimeout(() => programmaticMove = false, 700);
+    }catch(e){ toast('Standort nicht verfügbar: ' + e.message); }
+    btn.textContent = original;
+  }
+
+  /* ---------------- Navigationsmodus ---------------- */
+  function enterNavMode(){
+    navModeActive = true;
+    autoFollow = true;
+    document.getElementById('navExitBtn').style.display = 'flex';
+    updateNavRecenterVisibility();
+    if(window.__lastPos){
+      programmaticMove = true;
+      map.flyTo({ center:[window.__lastPos.lng, window.__lastPos.lat], zoom:17, duration:600 });
+      setTimeout(() => programmaticMove = false, 700);
+    }
+    renderQuest();
+  }
+  function exitNavMode(){
+    navModeActive = false;
+    document.getElementById('navExitBtn').style.display = 'none';
+    document.getElementById('navRecenterBtn').style.display = 'none';
+    renderQuest();
+  }
+  function updateNavRecenterVisibility(){
+    document.getElementById('navRecenterBtn').style.display = (navModeActive && !autoFollow) ? 'flex' : 'none';
+  }
+  function recenterNav(){
+    autoFollow = true;
+    updateNavRecenterVisibility();
+    if(window.__lastPos){
+      programmaticMove = true;
+      map.easeTo({ center:[window.__lastPos.lng, window.__lastPos.lat], zoom:17, duration:500 });
+      setTimeout(() => programmaticMove = false, 600);
+    }
+  }
+
+  document.getElementById('centerBtn').onclick = fitRoute;
+  document.getElementById('locateBtn').onclick = locateMe;
+  document.getElementById('northBtn').onclick = () => map.easeTo({ bearing:0, pitch:0, duration:400 });
+  document.getElementById('navExitBtn').onclick = exitNavMode;
+  document.getElementById('navRecenterBtn').onclick = recenterNav;
+
+  /* ---------------- GPS live + Proximity ---------------- */
+  let initialLocateDone = false;
+  function checkProximity(lat,lng){
+    window.__lastPos = { lat, lng };
+    updateMeMarker(lat,lng);
+    if(!initialLocateDone && map){
+      initialLocateDone = true;
+      programmaticMove = true;
+      map.jumpTo({ center:[lng,lat], zoom:16 });
+      setTimeout(() => programmaticMove = false, 300);
+    }
+    if(navModeActive && autoFollow && map){
+      programmaticMove = true;
+      map.easeTo({ center:[lng,lat], zoom: map.getZoom() < 16 ? 17 : map.getZoom(), duration:500 });
+      setTimeout(() => programmaticMove = false, 600);
+    }
+
+    const nIdx = nextUnvisitedIndex();
+    if(nIdx === -1) return;
+    updateDistanceReadout(route.waypoints[nIdx]);
+
+    let hitIndex = -1;
+    for(let i = nIdx; i < route.waypoints.length; i++){
+      const w = route.waypoints[i];
+      if(progress.visited.includes(w.id)) continue;
+      const d = haversine(lat, lng, w.lat, w.lng);
+      const r = w.radius || defaultRadius;
+      if(d <= r){ hitIndex = i; break; }
+    }
+    if(hitIndex === -1) return;
+
+    if(hitIndex > nIdx){
+      for(let i = nIdx; i < hitIndex; i++){
+        const skipped = route.waypoints[i];
+        if(!progress.visited.includes(skipped.id)) progress.visited.push(skipped.id);
+      }
+      saveProgress(); updateHUD(); renderWpMarkers();
+    }
+    triggerWaypoint(route.waypoints[hitIndex]);
+  }
+  function startLiveGPS(){
+    if(!('geolocation' in navigator)){ toast('Kein GPS auf diesem Gerät verfügbar'); return; }
+    watchId = navigator.geolocation.watchPosition(
+      pos => { els.gpsDot.className = 'gps-dot live'; checkProximity(pos.coords.latitude, pos.coords.longitude); },
+      err => { toast('GPS-Fehler: ' + err.message); },
+      { enableHighAccuracy:true, maximumAge:2000, timeout:15000 }
+    );
+  }
+  function stopLiveGPS(){ if(watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; } }
+
+  /* ---------------- Quest-Karte (Bottom-Overlay) ---------------- */
+  function renderQuest(){
+    if(!route){ renderEmptyState(); return; }
+    document.getElementById('emptyState').style.display = 'none';
+    updateHUD();
+    const nIdx = nextUnvisitedIndex();
+    if(nIdx === -1){ renderFinish(); renderWpMarkers(); if(navModeActive) exitNavMode(); return; }
+
+    const target = route.waypoints[nIdx];
+
+    if(navModeActive){
+      els.quest.classList.add('compact');
+      els.quest.innerHTML = `<div class="quest-row">
+        <div class="quest-dist" id="distReadout">–<span>m</span></div>
+        <div class="quest-name" style="margin-top:0;">bis <b>${waypointLabel(nIdx) === 'Start' ? 'Start' : 'Punkt ' + waypointLabel(nIdx)}</b></div>
+      </div>`;
+      updateDistanceReadout(target);
+      return;
+    }
+
+    els.quest.classList.remove('compact');
+    let html = `
+      <div class="quest-eyebrow">🎯 Nächste Mission</div>
+      <div class="quest-dist" id="distReadout">–<span>m</span></div>
+      <div class="quest-name">weiter zu <b>${waypointLabel(nIdx) === 'Start' ? 'Start' : 'Punkt ' + waypointLabel(nIdx)}</b></div>
+      <button class="btn btn-primary" id="navStartBtn">🧭 Navigation starten</button>
+      ${progress.visited.length > 0 ? `<button class="cancel-link" id="cancelRouteBtn">🛑 Route abbrechen</button>` : ''}
+      <div class="chips-scroll">`;
+    route.waypoints.forEach((w,i) => {
+      const done = progress.visited.includes(w.id);
+      const current = i === nIdx;
+      html += `<div class="step-chip ${done?'done':''} ${current?'current':''}">
+        <div class="step-chip-icon">${done?'✅':(TYPE_EMOJI[w.type]||'📍')}</div>
+        <div class="step-chip-name">${waypointLabel(i)}</div>
+      </div>`;
+    });
+    html += `</div><button class="fallback-btn" id="fallbackBtn">GPS zickt rum? Hier manuell bestätigen 👀</button>`;
+
+    els.quest.innerHTML = html;
+    document.getElementById('fallbackBtn').onclick = () => {
+      if(confirm('Wegpunkt "'+target.name+'" wirklich manuell bestätigen?')) triggerWaypoint(target);
+    };
+    document.getElementById('navStartBtn').onclick = () => {
+      const startWp = route.waypoints.find(w => w.type === 'start');
+      if(startWp && !progress.visited.includes(startWp.id)){
+        progress.visited.push(startWp.id);
+        progress.xp += (TYPE_XP[startWp.type] || 10);
+        if(!progress.startedAt) progress.startedAt = Date.now();
+        saveProgress(); updateHUD(); renderWpMarkers();
+      }
+      enterNavMode();
+    };
+    const cancelBtn = document.getElementById('cancelRouteBtn');
+    if(cancelBtn) cancelBtn.onclick = () => {
+      if(!confirm('Route wirklich abbrechen? Dein Fortschritt auf dieser Route wird zurückgesetzt.')) return;
+      progress = { visited: [], startedAt: null, xp: 0 };
+      saveProgress();
+      if(navModeActive) exitNavMode();
+      renderWpMarkers(); renderQuest();
+      toast('Route abgebrochen — Fortschritt zurückgesetzt');
+    };
+    updateDistanceReadout(target);
+  }
+
+  function updateDistanceReadout(target){
+    const el = document.getElementById('distReadout');
+    if(!el || !window.__lastPos) return;
+    const d = haversine(window.__lastPos.lat, window.__lastPos.lng, target.lat, target.lng);
+    const f = fmtDist(d);
+    el.innerHTML = f.val + '<span>' + f.unit + '</span>';
+  }
+
+  function renderEmptyState(){
+    els.quest.style.display = 'none';
+    document.getElementById('emptyState').style.display = 'flex';
+  }
+
+  function renderFinish(){
+    const elapsed = progress.startedAt ? Math.round((Date.now()-progress.startedAt)/60000) : 0;
+    const rank = rankFor(progress.xp);
+    els.quest.classList.remove('compact');
+    els.quest.innerHTML = `<div class="finish">
+      <div class="finish-mascot">${rank.emoji}</div>
+      <div class="finish-eyebrow">Mission abgeschlossen</div>
+      <div class="finish-title">Zurück auf der Erde! 🏁</div>
+      <div class="finish-rank">Rang erreicht: ${rank.name}</div>
+      <div class="stats">
+        <div class="stat"><div class="stat-val">${route.waypoints.length}</div><div class="stat-label">Stationen</div></div>
+        <div class="stat"><div class="stat-val">${progress.xp}</div><div class="stat-label">XP gesammelt</div></div>
+        <div class="stat"><div class="stat-val">${elapsed}</div><div class="stat-label">Minuten</div></div>
+        <div class="stat"><div class="stat-val">35€</div><div class="stat-label">Für den Mars</div></div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;" id="restartBtn">Neue Runde starten</button>
+    </div>`;
+    document.getElementById('restartBtn').onclick = () => {
+      if(!confirm('Fortschritt wirklich zurücksetzen und von vorne starten?')) return;
+      progress = { visited: [], startedAt: Date.now(), xp: 0 };
+      saveProgress(); renderQuest();
+    };
+  }
+
+  /* ---------------- Waypoint-Trigger (Ankunfts-Karte) ---------------- */
+  function triggerWaypoint(wp){
+    if(overlayOpen) return;
+    if(progress.visited.includes(wp.id)) return;
+    if(!progress.startedAt) progress.startedAt = Date.now();
+    progress.visited.push(wp.id);
+    const xpGain = TYPE_XP[wp.type] || 10;
+    progress.xp += xpGain;
+    saveProgress(); updateHUD(); renderWpMarkers();
+
+    if(wp.type === 'start'){ renderQuest(); return; }
+
+    overlayOpen = true;
+    vibrate(wp.type);
+    if(soundOn) playChime();
+    burstConfetti();
+
+    const hasAction = !!wp.hypershellAction;
+    const hasFact = !!wp.funfact;
+    const rank = rankFor(progress.xp);
+
+    els.card.innerHTML = `
+      <div class="mascot-bubble">
+        <div class="mascot-face">${rank.emoji}</div>
+        <div class="bubble">${MASCOT_LINES[wp.type]||''}${(() => { const idx = route.waypoints.findIndex(x=>x.id===wp.id); const l = waypointLabel(idx); return l==='Start' ? 'Start' : ('Punkt ' + l); })()}</div>
+      </div>
+      <div class="xp-pop">✨ +${xpGain} XP</div>
+      <div class="card-title">${esc(wp.instruction)}</div>
+      ${hasAction ? `<div class="action-box"><div class="action-box-icon">⚡</div><div class="action-box-text">${esc(wp.hypershellAction)}</div></div>` : ''}
+      ${hasFact ? `<div class="funfact"><div class="funfact-label">💡 Fun Fact</div>${esc(wp.funfact)}</div>` : ''}
+      <div class="card-actions">
+        <button class="btn-ghost" id="cardReplay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Nochmal vorlesen</button>
+      </div>`;
+
+    els.overlay.classList.add('show');
+    const fullText = wp.instruction + (hasFact ? '. ' + wp.funfact : '');
+    document.getElementById('cardReplay').onclick = (e) => { e.stopPropagation(); scheduleOverlayAutoClose(fullText); };
+    els.overlay.onclick = (e) => { if(e.target === els.overlay) closeOverlay(); };
+    scheduleOverlayAutoClose(fullText);
+  }
+  function scheduleOverlayAutoClose(text){
+    if(overlayAutoCloseTimer) clearTimeout(overlayAutoCloseTimer);
+    const wordCount = (text||'').split(/\s+/).filter(Boolean).length;
+    const fallbackMs = Math.max(4500, wordCount * 480) + 4000;
+    overlayAutoCloseTimer = setTimeout(closeOverlay, fallbackMs);
+    if(voiceOn && 'speechSynthesis' in window && text){
+      speak(text, () => {
+        if(overlayAutoCloseTimer) clearTimeout(overlayAutoCloseTimer);
+        overlayAutoCloseTimer = setTimeout(closeOverlay, 1000);
+      });
+    }
+  }
+  function closeOverlay(){
+    if(overlayAutoCloseTimer){ clearTimeout(overlayAutoCloseTimer); overlayAutoCloseTimer = null; }
+    els.overlay.classList.remove('show');
+    overlayOpen = false;
+    if('speechSynthesis' in window) speechSynthesis.cancel();
+    renderQuest();
+  }
+  function vibrate(type){
+    if(!navigator.vibrate) return;
+    if(type==='mode') navigator.vibrate([80,60,80]);
+    else if(type==='finish') navigator.vibrate([100,50,100,50,200]);
+    else navigator.vibrate(80);
+  }
+
+  /* ---------------- Sound-Chime ---------------- */
+  let actx = null;
+  function playChime(){
+    try{
+      if(!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      [880, 1175].forEach((f,i) => {
+        const o = actx.createOscillator(), g = actx.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        o.connect(g); g.connect(actx.destination);
+        const t0 = actx.currentTime + i*0.09;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.15, t0+0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0+0.35);
+        o.start(t0); o.stop(t0+0.4);
+      });
+    }catch(e){}
+  }
+
+  /* ---------------- Konfetti ---------------- */
+  const confettiCanvas = document.getElementById('confettiCanvas');
+  const cctx = confettiCanvas.getContext('2d');
+  function resizeConfetti(){ confettiCanvas.width = innerWidth; confettiCanvas.height = innerHeight; }
+  window.addEventListener('resize', resizeConfetti); resizeConfetti();
+  function burstConfetti(){
+    const colors = ['#d9a53f','#f0be5c','#6fd9a8','#ff8f66','#6fb3d9'];
+    const particles = Array.from({length:60}, () => ({
+      x: confettiCanvas.width/2 + (Math.random()-0.5)*80,
+      y: confettiCanvas.height*0.35,
+      vx: (Math.random()-0.5)*9, vy: -Math.random()*7-3,
+      size: Math.random()*6+4, color: colors[Math.floor(Math.random()*colors.length)],
+      rot: Math.random()*Math.PI*2, vr: (Math.random()-0.5)*0.3
+    }));
+    let frame = 0;
+    function tick(){
+      frame++;
+      cctx.clearRect(0,0,confettiCanvas.width, confettiCanvas.height);
+      let alive = false;
+      particles.forEach(p => {
+        p.vy += 0.22; p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+        if(p.y < confettiCanvas.height+20) alive = true;
+        cctx.save(); cctx.translate(p.x,p.y); cctx.rotate(p.rot);
+        cctx.fillStyle = p.color; cctx.fillRect(-p.size/2,-p.size/2,p.size,p.size*0.6);
+        cctx.restore();
+      });
+      if(alive && frame < 140) requestAnimationFrame(tick);
+      else cctx.clearRect(0,0,confettiCanvas.width, confettiCanvas.height);
+    }
+    tick();
+  }
+
+  /* ---------------- Text-to-Speech ---------------- */
+  function loadVoices(){
+    voices = speechSynthesis.getVoices().filter(v => v.lang.startsWith('de'));
+    const sel = document.getElementById('voiceSelect');
+    sel.innerHTML = voices.map(v => `<option value="${v.voiceURI}">${v.name}</option>`).join('');
+    if(selectedVoiceURI) sel.value = selectedVoiceURI;
+  }
+  if('speechSynthesis' in window){ speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
+  function speak(text, onEnd){
+    if(!voiceOn || !('speechSynthesis' in window) || !text){ if(onEnd) onEnd(); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'de-DE';
+    const v = voices.find(v => v.voiceURI === selectedVoiceURI);
+    if(v) u.voice = v;
+    u.rate = 0.98;
+    if(onEnd){ u.onend = onEnd; u.onerror = onEnd; }
+    speechSynthesis.speak(u);
+  }
+
+  /* ---------------- Settings drawer ---------------- */
+  document.getElementById('settingsBtn').onclick = () => {
+    document.getElementById('voiceSwitch').classList.toggle('on', voiceOn);
+    document.getElementById('soundSwitch').classList.toggle('on', soundOn);
+    buildRouteLibraryUI();
+    document.getElementById('statusLine').textContent = !route
+      ? 'Noch keine Route aktiv.'
+      : 'Route: ' + route.name + ' · Besucht: ' + progress.visited.length + '/' + route.waypoints.length + ' · XP: ' + progress.xp;
+    drawerEl.classList.add('open');
   };
-  map.addSource('route', { type: 'geojson', data: routeGeojson });
-  map.addLayer({
-    id: 'route-casing', type: 'line', source: 'route',
-    layout: { 'line-cap':'round', 'line-join':'round' },
-    paint: { 'line-color':'#ffffff', 'line-width':9, 'line-opacity':0.35 }
-  });
-  map.addLayer({
-    id: 'route-line', type: 'line', source: 'route',
-    layout: { 'line-cap':'round', 'line-join':'round' },
-    paint: { 'line-color':'#ff1a1a', 'line-width':5, 'line-opacity':0.95 }
-  });
+  document.getElementById('closeDrawer').onclick = () => drawerEl.classList.remove('open');
+  document.getElementById('voiceSwitch').onclick = () => {
+    voiceOn = !voiceOn; localStorage.setItem('exotrail_voiceon', voiceOn ? '1':'0');
+    document.getElementById('voiceSwitch').classList.toggle('on', voiceOn);
+  };
+  document.getElementById('soundSwitch').onclick = () => {
+    soundOn = !soundOn; localStorage.setItem('exotrail_soundon', soundOn ? '1':'0');
+    document.getElementById('soundSwitch').classList.toggle('on', soundOn);
+  };
+  document.getElementById('voiceSelect').onchange = (e) => {
+    selectedVoiceURI = e.target.value; localStorage.setItem('exotrail_voice', selectedVoiceURI);
+  };
+  document.getElementById('emptyStateSettingsBtn').onclick = () => { buildRouteLibraryUI(); drawerEl.classList.add('open'); };
 
-  renderWpMarkers();
-  fitRoute();
-});
-
-// On-screen diagnostics — lightweight update on 'sourcedata' (fires very often),
-// the expensive queryRenderedFeatures() call only on 'idle' (fires rarely) —
-// doing that heavy query on every sourcedata event can thrash the main thread
-// into apparent unresponsiveness, which is likely what looked like a hang.
-let tileLoadCount = 0, tileErrorCount = 0;
-map.on('sourcedata', (e) => {
-  if(e.sourceId === 'protomaps' && e.isSourceLoaded){
-    tileLoadCount++;
-    document.getElementById('statusBar').innerHTML =
-      '<b>Kartendaten laden</b> · Update ' + tileLoadCount +
-      (tileErrorCount ? ' · ⚠️ ' + tileErrorCount + ' Fehler' : '');
-  }
-});
-map.on('idle', () => {
-  const feats = map.queryRenderedFeatures();
-  document.getElementById('statusBar').innerHTML =
-    '<b>Karte bereit</b> · sichtbare Objekte: ' + feats.length +
-    (tileErrorCount ? ' · ⚠️ ' + tileErrorCount + ' Fehler' : '');
-});
-map.on('error', (e) => {
-  tileErrorCount++;
-  const msg = (e && e.error && (e.error.message || JSON.stringify(e.error))) || JSON.stringify(e).slice(0,200);
-  document.getElementById('statusBar').innerHTML = '⚠️ <b>Kartenfehler (' + tileErrorCount + ')</b>: ' + esc(msg);
-  console.error('MapLibre error:', e);
-});
-
-function renderWpMarkers(){
-  wpMarkers.forEach(m => m.remove());
-  wpMarkers = [];
-  const nIdx = nextUnvisitedIndex();
-  route.waypoints.forEach((w,i) => {
-    const current = i === nIdx;
-    const label = waypointLabel(i);
-    const wrap = document.createElement('div');
-    wrap.className = 'wp-pin-wrap';
-    wrap.innerHTML =
-      (current ? '<div class="wp-pin-ring"></div>' : '') +
-      '<div class="wp-pin ' + (current ? 'current' : 'dim') + '">' + label + '</div>' +
-      (current ? '<div class="wp-tooltip-box">' + esc(w.name) + '</div>' : '');
-    const marker = new maplibregl.Marker({ element: wrap, anchor:'center' })
-      .setLngLat([w.lng, w.lat])
-      .addTo(map);
-    wpMarkers.push(marker);
-  });
-}
-
-function fitRoute(){
-  const lats = route.waypoints.map(w=>w.lat), lngs = route.waypoints.map(w=>w.lng);
-  const bounds = [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]];
-  map.fitBounds(bounds, { padding: 60, duration: 400 });
-}
-
-function updateMeMarker(lat,lng){
-  if(!meMarker){
-    const wrap = document.createElement('div');
-    wrap.className = 'me-wrap';
-    wrap.innerHTML = '<div class="me-dot"></div><div class="me-arrow"></div>';
-    meMarker = new maplibregl.Marker({ element: wrap, anchor:'center' }).setLngLat([lng,lat]).addTo(map);
+  /* ---------------- Init ---------------- */
+  if(!route){
+    renderEmptyState();
   } else {
-    meMarker.setLngLat([lng,lat]);
+    initMap();
+    renderQuest();
+    startLiveGPS();
   }
-}
-
-async function locateMe(){
-  const btn = document.getElementById('locateBtn');
-  const original = btn.textContent;
-  btn.textContent = '⏳';
-  try{
-    const pos = await getCurrentPositionAsync();
-    const lat = pos.coords.latitude, lng = pos.coords.longitude;
-    updateMeMarker(lat, lng);
-    map.flyTo({ center:[lng,lat], zoom:16, duration:600 });
-    const d = Math.round(haversine(lat, lng, route.waypoints[0].lat, route.waypoints[0].lng)/1000);
-    document.getElementById('statusBar').innerHTML = '<b>Du bist hier</b> · ' + d + ' km von Startpunkt entfernt';
-  }catch(e){
-    document.getElementById('statusBar').textContent = '⚠️ Standort nicht verfügbar: ' + e.message;
-  }
-  btn.textContent = original;
-}
-
-document.getElementById('centerBtn').onclick = fitRoute;
-document.getElementById('locateBtn').onclick = locateMe;
-document.getElementById('northBtn').onclick = () => map.easeTo({ bearing:0, pitch:0, duration:400 });
+})();
 </script>
 </body>
 </html>
