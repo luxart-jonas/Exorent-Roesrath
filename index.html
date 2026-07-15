@@ -14,14 +14,17 @@
   Karte, GPS-Geofencing, Ankunfts-Karten (TTS/Konfetti/Sound),
   Navigationsmodus mit Auto-Follow, vereinfachten Einstellungen.
 
-  BEWUSST NICHT enthalten (kommt in Runde 2):
-    • Aufnahme-Modus ("Neue Route erstellen" / Hier markieren)
-    • Planungs-Modus ("Karte am Handy erstellen")
+  Planungs-Modus ("Karte am Handy erstellen") ist jetzt mit drin:
+  auf die Karte tippen setzt Punkte, dazwischen wird der Weg per
+  Routing-Service (routing.openstreetmap.de, Fuß-Profil) entlang
+  echter Pfade berechnet statt einer Luftlinie.
+
+  BEWUSST NICHT enthalten (kommt noch):
+    • Aufnahme-Modus (Route wirklich ablaufen, "Hier markieren")
     • Offline-Download-Button für Kartenkacheln
   Diese Datei liest/schreibt dieselben localStorage-Keys wie
   die bisherige exo-trail-navi.html (exotrail_routes_v1,
-  exotrail_active_route_id, exotrail_progress_<id>, ...) — neue
-  Routen bitte vorerst weiter dort aufnehmen/planen.
+  exotrail_active_route_id, exotrail_progress_<id>, ...).
   ============================================================
 -->
 <style>
@@ -265,8 +268,13 @@
     <div class="icon-btn" id="closeDrawer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg></div>
   </div>
   <div class="drawer-body">
+    <div class="section-label">Testen</div>
+    <button class="btn-block accent" id="flyRoesrathBtn">🚀 Nach Rösrath fliegen</button>
+    <div class="row-sub" style="margin-top:6px;">Springt zur echten Kartenabdeckung (Bergisches Land) — praktisch, wenn du gerade woanders unterwegs bist und trotzdem planen willst.</div>
+
     <div class="section-label">Meine Routen</div>
     <div id="routeLibraryList"></div>
+    <button class="btn-block accent" id="planRouteBtn">🗺️ Karte am Handy erstellen</button>
 
     <div class="section-label">Sprachausgabe &amp; Sound</div>
     <div class="row"><div class="row-label">Sprachansage (TTS)</div><div class="switch" id="voiceSwitch"></div></div>
@@ -276,10 +284,9 @@
     <div class="section-label">Status</div>
     <div class="status-line" id="statusLine"></div>
 
-    <div class="section-label">Kommt in Runde 2</div>
-    <div class="roadmap-note">Aufnahme-Modus, Planungs-Modus und der Offline-Download-Button fehlen hier noch bewusst — die gibt's aktuell weiter in der bisherigen App. Kommt als Nächstes.</div>
+    <div class="section-label">Kommt noch</div>
+    <div class="roadmap-note">Aufnahme-Modus (Route ablaufen) und der Offline-Download-Button für Kartenkacheln fehlen hier noch bewusst — die gibt's aktuell weiter in der bisherigen App.</div>
     <button class="btn-block" disabled>➕ Neue Route erstellen (laufen)</button>
-    <button class="btn-block" disabled>🗺️ Karte am Handy erstellen</button>
     <button class="btn-block" disabled>Karte offline speichern</button>
   </div>
 </div>
@@ -338,6 +345,14 @@
   let programmaticMove = false;
   let overlayOpen = false;
   let overlayAutoCloseTimer = null;
+
+  // Planungs-Modus: Punkte antippen, Wege zwischen ihnen per Routing-Service
+  const ROESRATH_CENTER = { lat: 50.8896, lng: 7.2033 };
+  let planningMode = false;
+  let planning = [];        // { id, name, type, instruction, radius, lat, lng }
+  let planningTrack = [];   // [[lat,lng], ...] entlang der berechneten Wege
+  let planningSegLens = []; // Länge (Punktzahl) jedes Wegabschnitts, für Undo
+  let planningMarkers = [];
 
   const els = {
     gpsDot: document.getElementById('gpsDot'),
@@ -409,8 +424,15 @@
     localStorage.setItem('exotrail_active_route_id', id);
     progress = loadProgress(id) || { visited: [], startedAt: null, xp: 0 };
     saveProgress();
-    if(map){
-      map.getSource('route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: routeLineCoords(route) } });
+    if(map && mapReady){
+      const data = { type:'Feature', geometry:{ type:'LineString', coordinates: routeLineCoords(route) } };
+      if(map.getSource('route')){
+        map.getSource('route').setData(data);
+      } else {
+        map.addSource('route', { type:'geojson', data });
+        map.addLayer({ id:'route-casing', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#ffffff','line-width':9,'line-opacity':0.35 } }, 'planning-casing');
+        map.addLayer({ id:'route-line', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#6fb3d9','line-width':5,'line-opacity':0.95 } }, 'planning-casing');
+      }
       renderWpMarkers();
       fitRoute();
     }
@@ -440,7 +462,7 @@
   }
 
   /* ---------------- Map setup (MapLibre + PMTiles) ---------------- */
-  let map = null, meMarker = null, wpMarkers = [];
+  let map = null, meMarker = null, wpMarkers = [], mapReady = false;
 
   function initMap(){
     const protocol = new pmtiles.Protocol();
@@ -458,10 +480,11 @@
       layers: generatedLayers
     };
 
-    const startWp = route.waypoints.find(w => w.type === 'start') || route.waypoints[0];
+    const startWp = route ? (route.waypoints.find(w => w.type === 'start') || route.waypoints[0]) : null;
+    const startCenter = startWp ? [startWp.lng, startWp.lat] : [ROESRATH_CENTER.lng, ROESRATH_CENTER.lat];
     map = new maplibregl.Map({
       container: 'map', style,
-      center: [startWp.lng, startWp.lat], zoom: 14, pitch: 0,
+      center: startCenter, zoom: 14, pitch: 0,
       attributionControl: { compact: true }
       // touchZoomRotate + dragRotate sind standardmäßig an — freies Zwei-Finger-
       // Drehen wie in v0.15.0 der alten App, hier ganz ohne eigenen Gesture-Code.
@@ -475,14 +498,24 @@
     });
 
     map.on('load', () => {
-      map.addSource('route', { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates: routeLineCoords(route) } } });
-      map.addLayer({ id:'route-casing', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#ffffff','line-width':9,'line-opacity':0.35 } });
-      map.addLayer({ id:'route-line', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#6fb3d9','line-width':5,'line-opacity':0.95 } });
-      renderWpMarkers();
-      fitRoute();
+      if(route){
+        map.addSource('route', { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates: routeLineCoords(route) } } });
+        map.addLayer({ id:'route-casing', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#ffffff','line-width':9,'line-opacity':0.35 } });
+        map.addLayer({ id:'route-line', type:'line', source:'route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#6fb3d9','line-width':5,'line-opacity':0.95 } });
+        renderWpMarkers();
+        fitRoute();
+      }
+      // Planungs-Route: eigene Source/Layer, unabhängig davon ob gerade eine
+      // aktive Route existiert — Planen soll auch möglich sein, wenn die
+      // Bibliothek noch leer ist.
+      map.addSource('planning-route', { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates: [] } } });
+      map.addLayer({ id:'planning-casing', type:'line', source:'planning-route', layout:{ 'line-cap':'round','line-join':'round' }, paint:{ 'line-color':'#0c1210','line-width':7,'line-opacity':0.4 } });
+      map.addLayer({ id:'planning-line', type:'line', source:'planning-route', layout:{ 'line-cap':'round','line-join':'round','line-dasharray':[0.2,1.5] }, paint:{ 'line-color':'#f0be5c','line-width':4,'line-opacity':0.95 } });
+      mapReady = true;
     });
 
     map.on('dragstart', () => { if(!programmaticMove && navModeActive){ autoFollow = false; updateNavRecenterVisibility(); } });
+    map.on('click', (e) => { if(planningMode) doPlanPoint(e.lngLat); });
   }
 
   function renderWpMarkers(){
@@ -580,6 +613,9 @@
   function checkProximity(lat,lng){
     window.__lastPos = { lat, lng };
     updateMeMarker(lat,lng);
+    // Während des Planens (z.B. Rösrath planen, während man selbst auf den
+    // Azoren steht) soll ein echter GPS-Fix die Karte NICHT wegziehen.
+    if(planningMode) return;
     if(!initialLocateDone && map){
       initialLocateDone = true;
       programmaticMove = true;
@@ -591,6 +627,7 @@
       map.easeTo({ center:[lng,lat], zoom: map.getZoom() < 16 ? 17 : map.getZoom(), duration:500 });
       setTimeout(() => programmaticMove = false, 600);
     }
+    if(!route) return;
 
     const nIdx = nextUnvisitedIndex();
     if(nIdx === -1) return;
@@ -862,6 +899,163 @@
     speechSynthesis.speak(u);
   }
 
+  /* ---------------- Planungs-Modus: Punkte tippen, Wege statt Luftlinie ---------------- */
+  async function fetchFootPath(a, b){
+    try{
+      const url = 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/'
+        + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=geojson';
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if(data.code !== 'Ok' || !data.routes || !data.routes[0]) throw new Error('keine Route gefunden');
+      return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]); // GeoJSON [lng,lat] -> [lat,lng]
+    }catch(e){
+      toast('⚠️ Wege-Routing nicht verfügbar — gerade Linie verwendet');
+      return [[a.lat,a.lng],[b.lat,b.lng]];
+    }
+  }
+
+  function updatePlanningLine(){
+    if(!map || !mapReady) return;
+    const coords = planningTrack.map(p => [p[1], p[0]]); // [lat,lng] -> [lng,lat]
+    map.getSource('planning-route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: coords } });
+  }
+
+  function renderPlanningMarkers(){
+    if(!map) return;
+    planningMarkers.forEach(m => m.remove());
+    planningMarkers = [];
+    planning.forEach((w,i) => {
+      const isLast = i === planning.length - 1;
+      const label = i === 0 ? 'Start' : String(i).padStart(2,'0');
+      const wrap = document.createElement('div');
+      wrap.className = 'wp-pin-wrap';
+      wrap.innerHTML = '<div class="wp-pin ' + (isLast?'current':'dim') + '"><span>' + label + '</span></div>';
+      planningMarkers.push(new maplibregl.Marker({ element: wrap, anchor:'center' }).setLngLat([w.lng, w.lat]).addTo(map));
+    });
+  }
+  function clearPlanningMarkers(){ planningMarkers.forEach(m => m.remove()); planningMarkers = []; }
+
+  async function doPlanPoint(lngLat){
+    const lat = lngLat.lat, lng = lngLat.lng;
+    if(planning.length > 0){
+      const last = planning[planning.length - 1];
+      if(haversine(last.lat, last.lng, lat, lng) < 6){
+        toast('Das ist bereits dein letzter Punkt — tippe woanders für den nächsten');
+        return;
+      }
+    }
+    const isStart = planning.length === 0;
+    const label = String(planning.length).padStart(2,'0');
+    const entry = {
+      id: 'wp_'+Date.now(),
+      name: isStart ? 'Start' : ('Punkt ' + label),
+      type: isStart ? 'start' : 'checkpoint',
+      instruction: isStart ? 'Start der Tour.' : ('Dies ist Punkt ' + label + '.'),
+      hypershellAction: '', funfact: '', radius: defaultRadius,
+      lat, lng
+    };
+
+    if(isStart){
+      planning.push(entry);
+      planningTrack = [[lat,lng]];
+      planningSegLens = [];
+      renderPlanningMarkers();
+      updatePlanningLine();
+      renderPlanningPanel();
+      toast('🚀 Startpunkt gesetzt — tippe den nächsten Punkt');
+      return;
+    }
+
+    toast('🧭 Weg wird berechnet …');
+    const prev = planning[planning.length - 1];
+    const seg = await fetchFootPath({ lat: prev.lat, lng: prev.lng }, { lat, lng });
+    const toAppend = seg.length > 1 ? seg.slice(1) : seg;
+    planning.push(entry);
+    planningTrack = planningTrack.concat(toAppend);
+    planningSegLens.push(toAppend.length);
+    renderPlanningMarkers();
+    updatePlanningLine();
+    renderPlanningPanel();
+    toast('📍 Punkt ' + label + ' gesetzt · Weg berechnet (' + toAppend.length + ' Stützpunkte)');
+  }
+
+  function undoLastPlanPoint(){
+    if(planning.length === 0) return;
+    planning.pop();
+    if(planningSegLens.length > 0){
+      const n = planningSegLens.pop();
+      planningTrack.splice(planningTrack.length - n, n);
+    } else {
+      planningTrack = [];
+    }
+    renderPlanningMarkers();
+    updatePlanningLine();
+    renderPlanningPanel();
+    toast('↩️ Letzten Punkt entfernt');
+  }
+
+  function enterPlanningMode(){
+    planningMode = true;
+    planning = []; planningTrack = []; planningSegLens = [];
+    clearPlanningMarkers();
+    updatePlanningLine();
+    drawerEl.classList.remove('open');
+    els.quest.style.display = '';
+    document.getElementById('emptyState').style.display = 'none';
+    renderPlanningPanel();
+    toast('🗺️ Planungs-Modus: tippe auf die Karte für den Startpunkt');
+  }
+  function cancelPlanning(){
+    if(planning.length > 0 && !confirm('Planung wirklich verwerfen? Alle gesetzten Punkte gehen verloren.')) return;
+    planningMode = false;
+    planning = []; planningTrack = []; planningSegLens = [];
+    clearPlanningMarkers();
+    updatePlanningLine();
+    if(!route) renderEmptyState(); else renderQuest();
+  }
+  function finishPlanning(){
+    if(planning.length < 2){ toast('Setz mindestens Start + einen weiteren Punkt'); return; }
+    const name = prompt('Name für diese Route:', 'Meine Route') || 'Meine Route';
+    const id = 'route-'+Date.now();
+    const routeObj = { id, name, waypoints: planning.map(w => ({...w})), track: planningTrack.map(p=>[p[0],p[1]]), updatedAt: Date.now() };
+    routeLibrary[id] = routeObj;
+    saveRouteLibraryRef();
+    planningMode = false;
+    planning = []; planningTrack = []; planningSegLens = [];
+    clearPlanningMarkers();
+    updatePlanningLine();
+    activateRoute(id);
+    toast('Route "'+name+'" gespeichert · '+routeObj.waypoints.length+' Punkte 🎉');
+  }
+
+  function renderPlanningPanel(){
+    els.quest.classList.remove('compact');
+    els.quest.innerHTML = `
+      <div class="quest-eyebrow">🗺️ Route planen</div>
+      <div class="quest-name">Tippe auf die Karte, um Punkte zu setzen — dazwischen wird der Weg berechnet, keine Luftlinie.</div>
+      <div class="quest-name" style="margin-top:8px;"><b>${planning.length}</b> Punkt${planning.length===1?'':'e'} gesetzt${planningTrack.length ? ' · ' + planningTrack.length + ' Weg-Stützpunkte' : ''}</div>
+      <button class="btn btn-primary" id="planFinishBtn" ${planning.length<2 ? 'style="opacity:.4; pointer-events:none;"' : ''}>✅ Route speichern (${planning.length} Punkte)</button>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="fallback-btn" id="planUndoBtn" style="flex:1; ${planning.length===0?'opacity:.4; pointer-events:none;':''}">↩️ Letzten entfernen</button>
+        <button class="fallback-btn" id="planCancelBtn" style="flex:1; color:var(--danger); border-color:rgba(255,122,99,0.3);">Abbrechen</button>
+      </div>`;
+    document.getElementById('planFinishBtn').onclick = finishPlanning;
+    document.getElementById('planUndoBtn').onclick = undoLastPlanPoint;
+    document.getElementById('planCancelBtn').onclick = cancelPlanning;
+  }
+
+  function flyToRoesrath(){
+    if(!map){ toast('Karte lädt noch …'); return; }
+    drawerEl.classList.remove('open');
+    programmaticMove = true;
+    map.flyTo({ center:[ROESRATH_CENTER.lng, ROESRATH_CENTER.lat], zoom:15, duration:1200 });
+    setTimeout(() => programmaticMove = false, 1300);
+    toast('🚀 Unterwegs nach Rösrath …');
+  }
+  document.getElementById('flyRoesrathBtn').onclick = flyToRoesrath;
+  document.getElementById('planRouteBtn').onclick = enterPlanningMode;
+
   /* ---------------- Settings drawer ---------------- */
   document.getElementById('settingsBtn').onclick = () => {
     document.getElementById('voiceSwitch').classList.toggle('on', voiceOn);
@@ -887,13 +1081,9 @@
   document.getElementById('emptyStateSettingsBtn').onclick = () => { buildRouteLibraryUI(); drawerEl.classList.add('open'); };
 
   /* ---------------- Init ---------------- */
-  if(!route){
-    renderEmptyState();
-  } else {
-    initMap();
-    renderQuest();
-    startLiveGPS();
-  }
+  initMap();
+  if(!route){ renderEmptyState(); } else { renderQuest(); }
+  startLiveGPS();
 })();
 </script>
 </body>
