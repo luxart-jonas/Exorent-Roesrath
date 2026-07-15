@@ -125,6 +125,7 @@
     padding:5px 10px; box-shadow:0 3px 10px rgba(0,0,0,.45); white-space:nowrap; pointer-events:none;
   }
   .me-dot{ width:16px; height:16px; border-radius:50%; background:var(--sky); border:3px solid #fff; box-shadow:0 0 0 4px rgba(111,179,217,0.3); }
+  .helper-dot{ width:10px; height:10px; border-radius:50%; background:var(--bg); border:2px solid var(--sky); opacity:.85; }
 
   #emptyState{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; text-align:center; padding:30px; z-index:4; }
   #emptyState h2{ color:var(--gold-bright); font-size:16px; margin:0; }
@@ -349,10 +350,15 @@
   // Planungs-Modus: Punkte antippen, Wege zwischen ihnen per Routing-Service
   const ROESRATH_CENTER = { lat: 50.8896, lng: 7.2033 };
   let planningMode = false;
-  let planning = [];        // { id, name, type, instruction, radius, lat, lng }
-  let planningTrack = [];   // [[lat,lng], ...] entlang der berechneten Wege
-  let planningSegLens = []; // Länge (Punktzahl) jedes Wegabschnitts, für Undo
+  let planning = [];             // { id, name, type, instruction, radius, lat, lng } — nur ECHTE Quest-Punkte
+  let planningTrack = [];        // [[lat,lng], ...] entlang der berechneten Wege (inkl. Hilfspunkte)
+  let planningSegLens = [];      // Länge (Punktzahl) jedes Wegabschnitts, parallel zu planningSegIsWaypoint
+  let planningSegIsWaypoint = []; // true = Abschnitt endete an einem echten Wegpunkt, false = nur Hilfspunkt
+  let planningHelperPoints = []; // {lat,lng} je Hilfspunkt, für die dezente Anzeige auf der Karte
+  let planningHelperMode = false; // wenn an: nächster Tipp ist nur ein Hilfspunkt (kein Quest-Punkt)
+  let planningLastTrack = null;  // letzter Punkt (Wegpunkt ODER Hilfspunkt), Ausgangspunkt fürs nächste Routing
   let planningMarkers = [];
+  let planningHelperMarkers = [];
 
   const els = {
     gpsDot: document.getElementById('gpsDot'),
@@ -940,11 +946,13 @@
     const direct = haversine(a.lat,a.lng, b.lat,b.lng);
     const straight = [[a.lat,a.lng],[b.lat,b.lng]];
     try{
-      // radiuses=25 begrenzt, wie weit die API einen Punkt auf einen Weg
-      // "einschnappen" darf — verhindert, dass sie beim Wechsel Straße/Wanderweg
-      // auf einen völlig anderen, weiter entfernten Pfad ausweicht.
+      // radiuses begrenzt, wie weit die API einen Punkt auf einen Weg
+      // "einschnappen" darf. Zu eng (25m) sorgte dafür, dass ganz normale
+      // Straßen als "keine Verbindung" gemeldet wurden, sobald der Tipp-Punkt
+      // etwas daneben lag — 60m ist großzügiger, Umwege/Schleifen fängt der
+      // Sanity-Check unten trotzdem ab.
       const url = 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/'
-        + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=geojson&radiuses=25;25';
+        + a.lng + ',' + a.lat + ';' + b.lng + ',' + b.lat + '?overview=full&geometries=geojson&radiuses=60;60';
       const res = await fetch(url);
       if(!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
@@ -961,7 +969,7 @@
       }
       return coords;
     }catch(e){
-      toast('⚠️ Wege-Routing nicht verfügbar — direkt von Punkt zu Punkt verbunden');
+      toast('⚠️ Keine Wege-Verbindung gefunden — direkt von Punkt zu Punkt verbunden. Tipp: mit einem Hilfspunkt näher an den Weg rantasten.');
       return straight;
     }
   }
@@ -977,6 +985,8 @@
     if(!map) return;
     planningMarkers.forEach(m => m.remove());
     planningMarkers = [];
+    planningHelperMarkers.forEach(m => m.remove());
+    planningHelperMarkers = [];
     planning.forEach((w,i) => {
       const isLast = i === planning.length - 1;
       const label = i === 0 ? 'Start' : String(i).padStart(2,'0');
@@ -985,33 +995,34 @@
       wrap.innerHTML = '<div class="wp-pin ' + (isLast?'current':'dim') + '"><span>' + label + '</span></div>';
       planningMarkers.push(new maplibregl.Marker({ element: wrap, anchor:'center' }).setLngLat([w.lng, w.lat]).addTo(map));
     });
+    planningHelperPoints.forEach(p => {
+      const dot = document.createElement('div');
+      dot.className = 'helper-dot';
+      planningHelperMarkers.push(new maplibregl.Marker({ element: dot, anchor:'center' }).setLngLat([p.lng, p.lat]).addTo(map));
+    });
   }
-  function clearPlanningMarkers(){ planningMarkers.forEach(m => m.remove()); planningMarkers = []; }
+  function clearPlanningMarkers(){
+    planningMarkers.forEach(m => m.remove()); planningMarkers = [];
+    planningHelperMarkers.forEach(m => m.remove()); planningHelperMarkers = [];
+  }
 
   async function doPlanPoint(lngLat){
     const lat = lngLat.lat, lng = lngLat.lng;
-    if(planning.length > 0){
-      const last = planning[planning.length - 1];
-      if(haversine(last.lat, last.lng, lat, lng) < 6){
-        toast('Das ist bereits dein letzter Punkt — tippe woanders für den nächsten');
-        return;
-      }
-    }
-    const isStart = planning.length === 0;
-    const label = String(planning.length).padStart(2,'0');
-    const entry = {
-      id: 'wp_'+Date.now(),
-      name: isStart ? 'Start' : ('Punkt ' + label),
-      type: isStart ? 'start' : 'checkpoint',
-      instruction: isStart ? 'Start der Tour.' : ('Dies ist Punkt ' + label + '.'),
-      hypershellAction: '', funfact: '', radius: defaultRadius,
-      lat, lng
-    };
+    const isFirstEver = planning.length === 0 && planningTrack.length === 0;
 
-    if(isStart){
+    if(planningLastTrack && haversine(planningLastTrack.lat, planningLastTrack.lng, lat, lng) < 6){
+      toast('Das ist bereits dein letzter Punkt — tippe woanders für den nächsten');
+      return;
+    }
+
+    if(isFirstEver){
+      // Startpunkt ist immer ein echter Wegpunkt — Hilfspunkt-Modus wird hier ignoriert.
+      const entry = { id:'wp_'+Date.now(), name:'Start', type:'start', instruction:'Start der Tour.', hypershellAction:'', funfact:'', radius: defaultRadius, lat, lng };
       planning.push(entry);
       planningTrack = [[lat,lng]];
       planningSegLens = [];
+      planningSegIsWaypoint = [];
+      planningLastTrack = { lat, lng };
       renderPlanningMarkers();
       updatePlanningLine();
       renderPlanningPanel();
@@ -1020,12 +1031,26 @@
     }
 
     toast('🧭 Weg wird berechnet …');
-    const prev = planning[planning.length - 1];
-    const seg = await fetchFootPath({ lat: prev.lat, lng: prev.lng }, { lat, lng });
+    const seg = await fetchFootPath({ lat: planningLastTrack.lat, lng: planningLastTrack.lng }, { lat, lng });
     const toAppend = seg.length > 1 ? seg.slice(1) : seg;
-    planning.push(entry);
     planningTrack = planningTrack.concat(toAppend);
     planningSegLens.push(toAppend.length);
+    planningLastTrack = { lat, lng };
+
+    if(planningHelperMode){
+      planningSegIsWaypoint.push(false);
+      planningHelperPoints.push({ lat, lng });
+      renderPlanningMarkers();
+      updatePlanningLine();
+      renderPlanningPanel();
+      toast('🔗 Hilfspunkt gesetzt — zählt nicht als Quest-Punkt, führt den Weg nur hier durch');
+      return;
+    }
+
+    const label = String(planning.length).padStart(2,'0');
+    const entry = { id:'wp_'+Date.now(), name:'Punkt '+label, type:'checkpoint', instruction:'Dies ist Punkt '+label+'.', hypershellAction:'', funfact:'', radius: defaultRadius, lat, lng };
+    planning.push(entry);
+    planningSegIsWaypoint.push(true);
     renderPlanningMarkers();
     updatePlanningLine();
     renderPlanningPanel();
@@ -1033,23 +1058,37 @@
   }
 
   function undoLastPlanPoint(){
-    if(planning.length === 0) return;
-    planning.pop();
-    if(planningSegLens.length > 0){
-      const n = planningSegLens.pop();
-      planningTrack.splice(planningTrack.length - n, n);
-    } else {
-      planningTrack = [];
+    if(planningSegLens.length === 0){
+      // nur der Startpunkt existiert (oder gar nichts) — kompletter Reset
+      if(planning.length > 0){
+        planning = []; planningTrack = []; planningLastTrack = null;
+        planningHelperPoints = [];
+        renderPlanningMarkers(); updatePlanningLine(); renderPlanningPanel();
+        toast('↩️ Startpunkt entfernt');
+      }
+      return;
     }
+    const n = planningSegLens.pop();
+    const wasWaypoint = planningSegIsWaypoint.pop();
+    planningTrack.splice(planningTrack.length - n, n);
+    if(wasWaypoint) planning.pop();
+    else planningHelperPoints.pop();
+    const last = planningTrack[planningTrack.length - 1];
+    planningLastTrack = last ? { lat:last[0], lng:last[1] } : null;
     renderPlanningMarkers();
     updatePlanningLine();
     renderPlanningPanel();
-    toast('↩️ Letzten Punkt entfernt');
+    toast(wasWaypoint ? '↩️ Letzten Punkt entfernt' : '↩️ Letzten Hilfspunkt entfernt');
+  }
+
+  function resetPlanningState(){
+    planning = []; planningTrack = []; planningSegLens = []; planningSegIsWaypoint = [];
+    planningHelperPoints = []; planningLastTrack = null; planningHelperMode = false;
   }
 
   function enterPlanningMode(){
     planningMode = true;
-    planning = []; planningTrack = []; planningSegLens = [];
+    resetPlanningState();
     clearPlanningMarkers();
     updatePlanningLine();
     drawerEl.classList.remove('open');
@@ -1061,7 +1100,7 @@
   function cancelPlanning(){
     if(planning.length > 0 && !confirm('Planung wirklich verwerfen? Alle gesetzten Punkte gehen verloren.')) return;
     planningMode = false;
-    planning = []; planningTrack = []; planningSegLens = [];
+    resetPlanningState();
     clearPlanningMarkers();
     updatePlanningLine();
     if(!route) renderEmptyState(); else renderQuest();
@@ -1074,7 +1113,7 @@
     routeLibrary[id] = routeObj;
     saveRouteLibraryRef();
     planningMode = false;
-    planning = []; planningTrack = []; planningSegLens = [];
+    resetPlanningState();
     clearPlanningMarkers();
     updatePlanningLine();
     activateRoute(id);
@@ -1083,18 +1122,27 @@
 
   function renderPlanningPanel(){
     els.quest.classList.remove('compact');
+    const helperCount = planningHelperPoints.length;
     els.quest.innerHTML = `
       <div class="quest-eyebrow">🗺️ Route planen</div>
       <div class="quest-name">Tippe auf die Karte, um Punkte zu setzen — dazwischen wird der Weg berechnet, keine Luftlinie.</div>
-      <div class="quest-name" style="margin-top:8px;"><b>${planning.length}</b> Punkt${planning.length===1?'':'e'} gesetzt${planningTrack.length ? ' · ' + planningTrack.length + ' Weg-Stützpunkte' : ''}</div>
+      <div class="quest-name" style="margin-top:8px;"><b>${planning.length}</b> Quest-Punkt${planning.length===1?'':'e'}${helperCount ? ' · <b>'+helperCount+'</b> Hilfspunkt'+(helperCount===1?'':'e') : ''}</div>
+      <div class="row" style="padding:11px 0;">
+        <div class="row-label" style="font-size:13px;">🔗 Nächster Tipp = nur Hilfspunkt<div class="row-sub" style="margin-top:2px;">Führt den Weg genau hier durch, zählt aber nicht als Quest-Punkt</div></div>
+        <div class="switch ${planningHelperMode?'on':''}" id="planHelperSwitch"></div>
+      </div>
       <button class="btn btn-primary" id="planFinishBtn" ${planning.length<2 ? 'style="opacity:.4; pointer-events:none;"' : ''}>✅ Route speichern (${planning.length} Punkte)</button>
       <div style="display:flex; gap:8px; margin-top:8px;">
-        <button class="fallback-btn" id="planUndoBtn" style="flex:1; ${planning.length===0?'opacity:.4; pointer-events:none;':''}">↩️ Letzten entfernen</button>
+        <button class="fallback-btn" id="planUndoBtn" style="flex:1; ${(planning.length===0&&planningHelperPoints.length===0)?'opacity:.4; pointer-events:none;':''}">↩️ Letzten entfernen</button>
         <button class="fallback-btn" id="planCancelBtn" style="flex:1; color:var(--danger); border-color:rgba(255,122,99,0.3);">Abbrechen</button>
       </div>`;
     document.getElementById('planFinishBtn').onclick = finishPlanning;
     document.getElementById('planUndoBtn').onclick = undoLastPlanPoint;
     document.getElementById('planCancelBtn').onclick = cancelPlanning;
+    document.getElementById('planHelperSwitch').onclick = () => {
+      planningHelperMode = !planningHelperMode;
+      renderPlanningPanel();
+    };
   }
 
   function flyToRoesrath(){
