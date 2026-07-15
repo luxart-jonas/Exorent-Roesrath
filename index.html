@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>ExoTrail Navi · MapLibre-Test v0.6.0</title>
+<title>ExoTrail Navi · MapLibre-Test v0.6.1</title>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>
   :root{
@@ -100,7 +100,7 @@
       <select id="routeSelector" style="margin-top:6px; background:var(--bg-elevated); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:11px; padding:3px 6px;"></select>
       <button id="roesrathTestBtn" style="margin-top:6px; display:block; background:var(--gold); color:#141311; border:none; border-radius:6px; font-size:11px; font-weight:800; padding:5px 10px; cursor:pointer;">🧪 Rösrath-Test anzeigen (unabhängig von Bibliothek)</button>
     </div>
-    <div class="badge">MapLibre v0.6.0</div>
+    <div class="badge">MapLibre v0.6.1</div>
   </header>
   <div id="mapWrap">
     <div id="map"></div>
@@ -237,15 +237,6 @@ setTimeout(() => {
   }
 }, 25000);
 
-let generatedLayers;
-try{
-  generatedLayers = basemaps.layers('protomaps', basemaps.namedFlavor('dark'), { lang:'de' });
-  generatedLayers = boostMapContrast(generatedLayers);
-}catch(e){
-  console.error('basemaps.layers() failed:', e);
-  generatedLayers = [{ id:'bg-fallback', type:'background', paint:{ 'background-color':'#0c1210' } }];
-}
-
 // The default 'dark' flavor renders roads/labels too low-contrast and gives
 // buildings/water/land almost the same near-black tone. Precise fix using the
 // real Protomaps source-layer names (water, buildings, landuse, earth, natural,
@@ -274,11 +265,20 @@ function boostMapContrast(layers){
     if(layer.type === 'line'){
       layer.paint = layer.paint || {};
       if(sl === 'roads') layer.paint['line-color'] = '#9aa89f';
-      else if(sl === 'water' || sl === 'natural') layer.paint['line-color'] = '#2a5568'; // rivers/streams
+      else if(sl === 'water' || sl === 'natural') layer.paint['line-color'] = '#2a5568';
       else if(sl === 'buildings') layer.paint['line-color'] = '#4a564d';
     }
     return layer;
   });
+}
+
+let generatedLayers;
+try{
+  generatedLayers = basemaps.layers('protomaps', basemaps.namedFlavor('dark'), { lang:'de' });
+  generatedLayers = boostMapContrast(generatedLayers);
+}catch(e){
+  console.error('basemaps.layers() failed:', e);
+  generatedLayers = [{ id:'bg-fallback', type:'background', paint:{ 'background-color':'#0c1210' } }];
 }
 
 const style = {
